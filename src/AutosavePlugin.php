@@ -26,6 +26,8 @@ class AutosavePlugin implements Plugin
 
     protected string $indicatorPosition = 'before';
 
+    protected int|Closure|null $cacheTtl = null;
+
     public function getId(): string
     {
         return 'filament-autosave';
@@ -83,6 +85,13 @@ class AutosavePlugin implements Plugin
         return $this;
     }
 
+    public function cacheTtl(int|Closure $hours): static
+    {
+        $this->cacheTtl = $hours;
+
+        return $this;
+    }
+
     public function isGlobal(): bool
     {
         return $this->evaluate($this->isGlobal);
@@ -117,6 +126,15 @@ class AutosavePlugin implements Plugin
         return $this->indicatorPosition;
     }
 
+    public function getCacheTtl(): int
+    {
+        if ($this->cacheTtl !== null) {
+            return $this->evaluate($this->cacheTtl);
+        }
+
+        return config('filament-autosave.cache_ttl', 24);
+    }
+
     public function register(Panel $panel): void
     {
         //
@@ -132,18 +150,24 @@ class AutosavePlugin implements Plugin
             $pageClass = collect($scopes)->first(
                 fn ($scope) => is_string($scope)
                     && class_exists($scope)
-                    && in_array(HasAutosave::class, class_uses_recursive($scope))
+                    && (in_array(HasAutosave::class, class_uses_recursive($scope))
+                        || in_array(HasAutosaveForCreate::class, class_uses_recursive($scope)))
             );
 
             if (! $pageClass || in_array($pageClass, $this->exceptPages)) {
                 return '';
             }
 
+            $mode = in_array(HasAutosaveForCreate::class, class_uses_recursive($pageClass))
+                ? 'create'
+                : 'edit';
+
             return new HtmlString(
                 view('filament-autosave::autosave-indicator', [
                     'debounce' => $this->getDebounce(),
                     'enabled' => true,
                     'showTimestamp' => $this->shouldShowTimestamp(),
+                    'mode' => $mode,
                 ])->render()
             );
         });

@@ -1,10 +1,11 @@
-export default function autosave({ debounce = 1500, enabled = true }) {
+export default function autosave({ debounce = 1500, enabled = true, mode = 'edit' }) {
     return {
         status: 'idle',
         timestamp: null,
         timer: null,
         fadeTimer: null,
         previousData: null,
+        mode: mode,
 
         init() {
             if (! enabled) {
@@ -12,6 +13,10 @@ export default function autosave({ debounce = 1500, enabled = true }) {
             }
 
             this.previousData = JSON.stringify(this.$wire.data)
+
+            if (mode === 'create' && this.$wire.autosaveHasDraft) {
+                this.status = 'draft_available'
+            }
 
             this.$watch(
                 () => JSON.stringify(this.$wire.data),
@@ -40,6 +45,10 @@ export default function autosave({ debounce = 1500, enabled = true }) {
         },
 
         onDataChanged() {
+            if (this.status === 'draft_available') {
+                return
+            }
+
             clearTimeout(this.timer)
             clearTimeout(this.fadeTimer)
 
@@ -74,13 +83,36 @@ export default function autosave({ debounce = 1500, enabled = true }) {
             }
         },
 
+        async restore() {
+            clearTimeout(this.timer)
+            clearTimeout(this.fadeTimer)
+            this.status = 'saving'
+
+            try {
+                await this.$wire.restoreDraft()
+            } catch (e) {
+                this.setStatus('error')
+            }
+        },
+
+        async discard() {
+            clearTimeout(this.timer)
+            clearTimeout(this.fadeTimer)
+
+            try {
+                await this.$wire.discardDraft()
+            } catch (e) {
+                this.setStatus('error')
+            }
+        },
+
         setStatus(newStatus, newTimestamp = null) {
             clearTimeout(this.fadeTimer)
 
             this.status = newStatus
             this.timestamp = newTimestamp
 
-            const fadeDelays = { saved: 5000, undone: 3000 }
+            const fadeDelays = { saved: 5000, undone: 3000, restored: 3000 }
 
             if (fadeDelays[newStatus]) {
                 this.fadeTimer = setTimeout(() => {
@@ -88,7 +120,7 @@ export default function autosave({ debounce = 1500, enabled = true }) {
                 }, fadeDelays[newStatus])
             }
 
-            if (newStatus === 'saved' || newStatus === 'undone' || newStatus === 'idle') {
+            if (newStatus === 'saved' || newStatus === 'undone' || newStatus === 'idle' || newStatus === 'restored') {
                 this.previousData = JSON.stringify(this.$wire.data)
             }
         },

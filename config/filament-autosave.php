@@ -8,4 +8,6 @@ return [
     'except' => [],
 
     'show_timestamp' => true,
+
+    'cache_ttl' => 24,
 ];

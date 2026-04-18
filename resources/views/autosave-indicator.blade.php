@@ -2,18 +2,43 @@
     $debounce = $debounce ?? 1500;
     $enabled = $enabled ?? true;
     $showTimestamp = $showTimestamp ?? true;
+    $mode = $mode ?? 'edit';
 @endphp
 
 <div
     x-load
     x-load-src="{{ \Filament\Support\Facades\FilamentAsset::getAlpineComponentSrc('autosave', 'yousefaman/filament-autosave') }}"
-    x-data="autosave({ debounce: {{ $debounce }}, enabled: {{ $enabled ? 'true' : 'false' }} })"
+    x-data="autosave({ debounce: {{ $debounce }}, enabled: {{ $enabled ? 'true' : 'false' }}, mode: '{{ $mode }}' })"
     x-show="status !== 'idle'"
     x-transition:enter="fi-autosave-enter"
     x-transition:leave="fi-autosave-leave"
     class="fi-autosave-indicator"
     x-cloak
 >
+    <template x-if="status === 'draft_available'">
+        <span class="fi-autosave-draft">
+            <x-filament::icon
+                icon="heroicon-m-document-text"
+                class="fi-autosave-icon"
+            />
+            <span>{{ __('filament-autosave::autosave.draft_available') }}</span>
+            <button
+                type="button"
+                x-on:click="restore()"
+                class="fi-autosave-restore"
+            >
+                {{ __('filament-autosave::autosave.restore') }}
+            </button>
+            <button
+                type="button"
+                x-on:click="discard()"
+                class="fi-autosave-discard"
+            >
+                {{ __('filament-autosave::autosave.discard') }}
+            </button>
+        </span>
+    </template>
+
     <template x-if="status === 'unsaved'">
         <span class="fi-autosave-unsaved">
             <x-filament::icon
@@ -42,13 +67,25 @@
             @else
                 <span>{{ __('filament-autosave::autosave.saved') }}</span>
             @endif
-            <button
-                type="button"
-                x-on:click="undo()"
-                class="fi-autosave-undo"
-            >
-                {{ __('filament-autosave::autosave.undo') }}
-            </button>
+            @if($mode === 'edit')
+                <button
+                    type="button"
+                    x-on:click="undo()"
+                    class="fi-autosave-undo"
+                >
+                    {{ __('filament-autosave::autosave.undo') }}
+                </button>
+            @endif
+        </span>
+    </template>
+
+    <template x-if="status === 'restored'">
+        <span class="fi-autosave-restored">
+            <x-filament::icon
+                icon="heroicon-m-arrow-path"
+                class="fi-autosave-icon"
+            />
+            <span>{{ __('filament-autosave::autosave.restored') }}</span>
         </span>
     </template>
 

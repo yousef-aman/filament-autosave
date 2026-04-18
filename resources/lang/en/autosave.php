@@ -8,4 +8,8 @@ return [
     'undo' => 'Undo',
     'undone' => 'Change reverted',
     'error' => 'Autosave failed',
+    'draft_available' => 'You have a saved draft',
+    'restore' => 'Restore',
+    'discard' => 'Discard',
+    'restored' => 'Draft restored',
 ];

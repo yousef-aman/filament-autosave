@@ -2,6 +2,8 @@
 
 namespace YousefAman\FilamentAutosave;
 
+use Illuminate\Support\Facades\Cache;
+
 class AutosaveManager
 {
     /**
@@ -35,5 +37,29 @@ class AutosaveManager
     public static function snapshotHash(array $data): string
     {
         return md5((string) str(json_encode($data, JSON_UNESCAPED_UNICODE))->replace('\\', ''));
+    }
+
+    public static function cacheKey(string $pageClass): string
+    {
+        $userId = auth()->id() ?? session()->getId();
+
+        return 'filament-autosave:'.$userId.':'.$pageClass;
+    }
+
+    /** @param array<string, mixed> $data */
+    public static function storeDraft(string $key, array $data, int $ttlHours): void
+    {
+        Cache::put($key, $data, now()->addHours($ttlHours));
+    }
+
+    /** @return array<string, mixed>|null */
+    public static function restoreDraft(string $key): ?array
+    {
+        return Cache::get($key);
+    }
+
+    public static function clearDraft(string $key): void
+    {
+        Cache::forget($key);
     }
 }

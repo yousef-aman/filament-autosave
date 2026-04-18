@@ -4,19 +4,10 @@ namespace YousefAman\FilamentAutosave;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Validator;
 
 trait HasAutosave
 {
-    protected bool $autosaveEnabled = true;
-
-    protected int $autosaveDebounce = 0;
-
-    protected array $autosaveExcept = [];
-
-    protected bool $isAutosaving = false;
-
-    public string $autosaveSnapshotHash = '';
+    use HasAutosaveBase;
 
     /** @var array<string, mixed> */
     public array $autosaveLastSnapshot = [];
@@ -27,39 +18,7 @@ trait HasAutosave
             return;
         }
 
-        $this->autosaveSnapshotHash = AutosaveManager::snapshotHash($this->data ?? []);
-    }
-
-    public function getAutosaveDebounce(): int
-    {
-        if ($this->autosaveDebounce > 0) {
-            return $this->autosaveDebounce;
-        }
-
-        try {
-            return AutosavePlugin::get()->getDebounce();
-        } catch (\Throwable) {
-            return config('filament-autosave.debounce', 1500);
-        }
-    }
-
-    public function getAutosaveExcept(): array
-    {
-        $pageExcept = $this->autosaveExcept;
-        $configExcept = config('filament-autosave.except', []);
-
-        try {
-            $pluginExcept = AutosavePlugin::get()->getExcept();
-        } catch (\Throwable) {
-            $pluginExcept = [];
-        }
-
-        return array_values(array_unique(array_merge($configExcept, $pluginExcept, $pageExcept)));
-    }
-
-    public function isAutosaveEnabled(): bool
-    {
-        return $this->autosaveEnabled;
+        $this->autosaveSnapshotHash = AutosaveManager::snapshotHash($this->getAutosaveData());
     }
 
     public function autosave(): void
@@ -71,10 +30,12 @@ trait HasAutosave
         $this->isAutosaving = true;
 
         try {
-            $this->authorizeAccess();
+            if (method_exists($this, 'authorizeAccess')) {
+                $this->authorizeAccess();
+            }
 
             $except = $this->getAutosaveExcept();
-            $data = AutosaveManager::excludeFields($this->data ?? [], $except);
+            $data = AutosaveManager::excludeFields($this->getAutosaveData(), $except);
 
             $currentHash = AutosaveManager::snapshotHash($data);
             if ($currentHash === $this->autosaveSnapshotHash) {
@@ -108,7 +69,7 @@ trait HasAutosave
             $this->getRecord()->refresh();
 
             $this->autosaveSnapshotHash = AutosaveManager::snapshotHash(
-                AutosaveManager::excludeFields($this->data ?? [], $except)
+                AutosaveManager::excludeFields($this->getAutosaveData(), $except)
             );
             $this->syncSavedDataHash();
 
@@ -119,7 +80,7 @@ trait HasAutosave
                 timestamp: now()->format('g:i A'),
             );
         } catch (\Throwable $e) {
-            Log::warning('Autosave failed: ' . $e->getMessage());
+            Log::warning('Autosave failed: '.$e->getMessage());
 
             $this->dispatch('autosave-status', status: 'error');
         } finally {
@@ -134,15 +95,17 @@ trait HasAutosave
         }
 
         try {
-            $this->authorizeAccess();
+            if (method_exists($this, 'authorizeAccess')) {
+                $this->authorizeAccess();
+            }
 
             $this->handleRecordUpdate($this->getRecord(), $this->autosaveLastSnapshot);
             $this->getRecord()->refresh();
 
-            $this->data = array_merge($this->data, $this->autosaveLastSnapshot);
+            $this->fillAutosaveData($this->autosaveLastSnapshot);
 
             $this->autosaveSnapshotHash = AutosaveManager::snapshotHash(
-                AutosaveManager::excludeFields($this->data ?? [], $this->getAutosaveExcept())
+                AutosaveManager::excludeFields($this->getAutosaveData(), $this->getAutosaveExcept())
             );
             $this->syncSavedDataHash();
 
@@ -150,7 +113,7 @@ trait HasAutosave
 
             $this->dispatch('autosave-status', status: 'undone');
         } catch (\Throwable $e) {
-            Log::warning('Autosave undo failed: ' . $e->getMessage());
+            Log::warning('Autosave undo failed: '.$e->getMessage());
 
             $this->dispatch('autosave-status', status: 'error');
         }
@@ -159,58 +122,7 @@ trait HasAutosave
     /** @return array<string, mixed> */
     protected function getAutosaveOldData(): array
     {
-        return $this->getRecord()->fresh()->only(array_keys($this->data ?? []));
-    }
-
-    /**
-     * @param  array<string, mixed>  $fields
-     * @return array<string, mixed>
-     */
-    protected function validateAutosaveFields(array $fields): array
-    {
-        $allRules = $this->getAutosaveValidationRules();
-
-        if (empty($allRules)) {
-            return $fields;
-        }
-
-        $rules = array_intersect_key($allRules, $fields);
-
-        if (empty($rules)) {
-            return $fields;
-        }
-
-        $validator = Validator::make($fields, $rules);
-
-        if ($validator->fails()) {
-            $failedKeys = array_keys($validator->failed());
-
-            return array_diff_key($fields, array_flip($failedKeys));
-        }
-
-        return $fields;
-    }
-
-    protected function syncSavedDataHash(): void
-    {
-        if (property_exists($this, 'savedDataHash')) {
-            $this->savedDataHash = AutosaveManager::snapshotHash($this->data ?? []);
-        }
-    }
-
-    /** @return array<string, mixed> */
-    protected function getAutosaveValidationRules(): array
-    {
-        return [];
-    }
-
-    /**
-     * @param  array<string, mixed>  $data
-     * @return array<string, mixed>
-     */
-    protected function beforeAutosave(array $data): array
-    {
-        return $data;
+        return $this->getRecord()->fresh()->only(array_keys($this->getAutosaveData()));
     }
 
     protected function afterAutosave(Model $record): void
