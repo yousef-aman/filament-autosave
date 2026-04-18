@@ -12,6 +12,11 @@ trait HasAutosave
     /** @var array<string, mixed> */
     public array $autosaveLastSnapshot = [];
 
+    public function mountHasAutosave(): void
+    {
+        $this->initializeAutosave();
+    }
+
     public function initializeAutosave(): void
     {
         if (! $this->autosaveEnabled) {

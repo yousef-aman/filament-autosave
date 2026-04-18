@@ -21,6 +21,8 @@ trait HasAutosaveForCreate
         if ($draft) {
             $this->autosaveHasDraft = true;
         }
+
+        $this->initializeAutosaveForCreate();
     }
 
     public function initializeAutosaveForCreate(): void
@@ -32,6 +34,16 @@ trait HasAutosaveForCreate
         $this->autosaveSnapshotHash = AutosaveManager::snapshotHash(
             AutosaveManager::excludeFields($this->getAutosaveData(), $this->getAutosaveExcept())
         );
+    }
+
+    public function create(bool $another = false): void
+    {
+        $parent = get_parent_class($this);
+
+        if ($parent && method_exists($parent, 'create')) {
+            parent::create($another);
+            $this->clearDraftAfterCreate();
+        }
     }
 
     public function autosave(): void
