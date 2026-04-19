@@ -1,6 +1,11 @@
 <?php
 
+use Illuminate\Support\Facades\Cache;
 use YousefAman\FilamentAutosave\HasAutosave;
+
+beforeEach(function () {
+    Cache::flush();
+});
 
 function makeEditPage(array $formState = [], array $dbState = []): object
 {
@@ -189,6 +194,41 @@ test('autosave snapshot hash updates after successful save', function () {
     $page->autosave();
 
     expect($page->autosaveSnapshotHash)->not->toBe($originalHash);
+});
+
+test('autosave records an undo snapshot of previous DB values', function () {
+    $page = makeEditPage(['title' => 'Original'], ['title' => 'Original']);
+    $page->mountHasAutosave();
+
+    $page->form->setState(['title' => 'Updated']);
+    $page->autosave();
+
+    expect($page->autosaveCanUndo)->toBeTrue();
+});
+
+test('undoAutosave restores previous field values and clears snapshot', function () {
+    $page = makeEditPage(['title' => 'Original'], ['title' => 'Original']);
+    $page->mountHasAutosave();
+
+    $page->form->setState(['title' => 'Updated']);
+    $page->autosave();
+
+    $page->undoAutosave();
+
+    expect($page->updates)->toHaveCount(2);
+    expect($page->updates[1])->toBe(['title' => 'Original']);
+    expect($page->autosaveCanUndo)->toBeFalse();
+    expect(end($page->dispatched)['params'])->toHaveKey('status', 'undone');
+});
+
+test('undoAutosave is a no-op when no snapshot exists', function () {
+    $page = makeEditPage(['title' => 'Same'], ['title' => 'Same']);
+    $page->mountHasAutosave();
+
+    $page->undoAutosave();
+
+    expect($page->updates)->toBeEmpty();
+    expect($page->autosaveCanUndo)->toBeFalse();
 });
 
 test('autosave dispatches error on exception', function () {

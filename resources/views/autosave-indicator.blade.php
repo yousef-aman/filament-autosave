@@ -66,6 +66,26 @@
             @else
                 <span>{{ __('filament-autosave::autosave.saved') }}</span>
             @endif
+            @if ($mode === 'edit')
+                <button
+                    type="button"
+                    x-on:click="undo()"
+                    x-show="$wire.autosaveCanUndo"
+                    class="fi-autosave-undo"
+                >
+                    {{ __('filament-autosave::autosave.undo') }}
+                </button>
+            @endif
+        </span>
+    </template>
+
+    <template x-if="status === 'undone'">
+        <span class="fi-autosave-undone">
+            <x-filament::icon
+                icon="heroicon-m-arrow-uturn-left"
+                class="fi-autosave-icon"
+            />
+            <span>{{ __('filament-autosave::autosave.undone') }}</span>
         </span>
     </template>
 

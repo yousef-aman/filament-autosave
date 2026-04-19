@@ -73,6 +73,18 @@ export default function autosave({ debounce = 1500, mode = 'edit' }) {
             }
         },
 
+        async undo() {
+            clearTimeout(this.timer)
+            clearTimeout(this.fadeTimer)
+            this.status = 'saving'
+
+            try {
+                await this.$wire.undoAutosave()
+            } catch (e) {
+                this.setStatus('error')
+            }
+        },
+
         async restore() {
             clearTimeout(this.timer)
             clearTimeout(this.fadeTimer)
@@ -102,7 +114,7 @@ export default function autosave({ debounce = 1500, mode = 'edit' }) {
             this.status = newStatus
             this.timestamp = newTimestamp
 
-            const fadeDelays = { saved: 5000, restored: 3000 }
+            const fadeDelays = { saved: 5000, restored: 3000, undone: 3000 }
 
             if (fadeDelays[newStatus]) {
                 this.fadeTimer = setTimeout(() => {
@@ -110,7 +122,7 @@ export default function autosave({ debounce = 1500, mode = 'edit' }) {
                 }, fadeDelays[newStatus])
             }
 
-            if (newStatus === 'saved' || newStatus === 'idle' || newStatus === 'restored') {
+            if (newStatus === 'saved' || newStatus === 'idle' || newStatus === 'restored' || newStatus === 'undone') {
                 this.previousData = JSON.stringify(this.$wire.data)
             }
         },
