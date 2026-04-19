@@ -7,21 +7,18 @@ use Illuminate\Support\Facades\Cache;
 class AutosaveManager
 {
     /**
-     * @param  array<string, mixed>  $old
-     * @param  array<string, mixed>  $new
-     * @return array<string, mixed>
+     * Build a deterministic hash of form state, independent of key order.
+     *
+     * @param  array<string, mixed>  $data
      */
-    public static function getChangedFields(array $old, array $new): array
+    public static function snapshotHash(array $data): string
     {
-        $changed = [];
+        self::sortRecursive($data);
 
-        foreach ($new as $key => $value) {
-            if (! array_key_exists($key, $old) || $old[$key] !== $value) {
-                $changed[$key] = $value;
-            }
-        }
-
-        return $changed;
+        return hash('xxh128', json_encode(
+            $data,
+            JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES,
+        ));
     }
 
     /**
@@ -34,19 +31,14 @@ class AutosaveManager
         return array_diff_key($data, array_flip($except));
     }
 
-    public static function snapshotHash(array $data): string
-    {
-        return md5((string) str(json_encode($data, JSON_UNESCAPED_UNICODE))->replace('\\', ''));
-    }
-
     public static function cacheKey(string $pageClass): string
     {
-        $userId = auth()->id() ?? session()->getId();
+        $owner = auth()->id() ?? session()->getId();
 
-        return 'filament-autosave:'.$userId.':'.$pageClass;
+        return 'filament-autosave:'.$owner.':'.$pageClass;
     }
 
-    /** @param array<string, mixed> $data */
+    /** @param  array<string, mixed>  $data */
     public static function storeDraft(string $key, array $data, int $ttlHours): void
     {
         Cache::put($key, $data, now()->addHours($ttlHours));
@@ -55,11 +47,24 @@ class AutosaveManager
     /** @return array<string, mixed>|null */
     public static function restoreDraft(string $key): ?array
     {
-        return Cache::get($key);
+        $draft = Cache::get($key);
+
+        return is_array($draft) ? $draft : null;
     }
 
     public static function clearDraft(string $key): void
     {
         Cache::forget($key);
+    }
+
+    private static function sortRecursive(array &$data): void
+    {
+        ksort($data);
+
+        foreach ($data as &$value) {
+            if (is_array($value)) {
+                self::sortRecursive($value);
+            }
+        }
     }
 }

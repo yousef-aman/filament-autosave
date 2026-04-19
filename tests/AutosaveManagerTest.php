@@ -1,47 +1,20 @@
 <?php
 
+use Illuminate\Support\Facades\Cache;
 use YousefAman\FilamentAutosave\AutosaveManager;
-
-test('it detects changed fields between snapshots', function () {
-    $old = ['name' => 'John', 'email' => 'john@example.com', 'bio' => 'Hello'];
-    $new = ['name' => 'Jane', 'email' => 'john@example.com', 'bio' => 'Updated'];
-
-    $changed = AutosaveManager::getChangedFields($old, $new);
-
-    expect($changed)->toBe(['name' => 'Jane', 'bio' => 'Updated']);
-});
-
-test('it returns empty array when nothing changed', function () {
-    $data = ['name' => 'John', 'email' => 'john@example.com'];
-
-    $changed = AutosaveManager::getChangedFields($data, $data);
-
-    expect($changed)->toBe([]);
-});
-
-test('it detects changes in nested arrays', function () {
-    $old = ['name' => 'John', 'address' => ['city' => 'Riyadh', 'zip' => '12345']];
-    $new = ['name' => 'John', 'address' => ['city' => 'Jeddah', 'zip' => '12345']];
-
-    $changed = AutosaveManager::getChangedFields($old, $new);
-
-    expect($changed)->toBe(['address' => ['city' => 'Jeddah', 'zip' => '12345']]);
-});
 
 test('it excludes specified fields from data', function () {
     $data = ['name' => 'John', 'password' => 'secret', 'email' => 'john@example.com'];
-    $except = ['password'];
 
-    $filtered = AutosaveManager::excludeFields($data, $except);
+    $filtered = AutosaveManager::excludeFields($data, ['password']);
 
     expect($filtered)->toBe(['name' => 'John', 'email' => 'john@example.com']);
 });
 
 test('it excludes multiple fields', function () {
     $data = ['name' => 'John', 'password' => 'secret', 'password_confirmation' => 'secret', 'email' => 'john@example.com'];
-    $except = ['password', 'password_confirmation'];
 
-    $filtered = AutosaveManager::excludeFields($data, $except);
+    $filtered = AutosaveManager::excludeFields($data, ['password', 'password_confirmation']);
 
     expect($filtered)->toBe(['name' => 'John', 'email' => 'john@example.com']);
 });
@@ -49,34 +22,38 @@ test('it excludes multiple fields', function () {
 test('it returns original data when except list is empty', function () {
     $data = ['name' => 'John', 'email' => 'john@example.com'];
 
-    $filtered = AutosaveManager::excludeFields($data, []);
-
-    expect($filtered)->toBe($data);
+    expect(AutosaveManager::excludeFields($data, []))->toBe($data);
 });
 
-test('it creates a deterministic snapshot hash', function () {
+test('snapshotHash is deterministic for same data', function () {
     $data = ['name' => 'John', 'email' => 'john@example.com'];
 
-    $hash1 = AutosaveManager::snapshotHash($data);
-    $hash2 = AutosaveManager::snapshotHash($data);
-
-    expect($hash1)->toBe($hash2);
+    expect(AutosaveManager::snapshotHash($data))
+        ->toBe(AutosaveManager::snapshotHash($data));
 });
 
-test('it creates different hashes for different data', function () {
-    $data1 = ['name' => 'John'];
-    $data2 = ['name' => 'Jane'];
-
-    expect(AutosaveManager::snapshotHash($data1))
-        ->not->toBe(AutosaveManager::snapshotHash($data2));
+test('snapshotHash differs when values change', function () {
+    expect(AutosaveManager::snapshotHash(['name' => 'John']))
+        ->not->toBe(AutosaveManager::snapshotHash(['name' => 'Jane']));
 });
 
-test('cacheKey generates correct format', function () {
-    $key = AutosaveManager::cacheKey('App\\Filament\\Resources\\Articles\\Pages\\CreateArticle');
+test('snapshotHash is order-independent', function () {
+    $a = ['name' => 'John', 'email' => 'john@example.com'];
+    $b = ['email' => 'john@example.com', 'name' => 'John'];
 
-    $expectedUserId = auth()->id() ?? session()->getId();
+    expect(AutosaveManager::snapshotHash($a))->toBe(AutosaveManager::snapshotHash($b));
+});
 
-    expect($key)->toBe('filament-autosave:' . $expectedUserId . ':App\\Filament\\Resources\\Articles\\Pages\\CreateArticle');
+test('snapshotHash does not collide on escaped slashes', function () {
+    expect(AutosaveManager::snapshotHash(['value' => 'a\\b']))
+        ->not->toBe(AutosaveManager::snapshotHash(['value' => 'ab']));
+});
+
+test('cacheKey generates correct format for authenticated users', function () {
+    $key = AutosaveManager::cacheKey('App\\Some\\Page');
+    $expectedOwner = auth()->id() ?? session()->getId();
+
+    expect($key)->toBe('filament-autosave:'.$expectedOwner.':App\\Some\\Page');
 });
 
 test('cacheKey falls back to session id for guests', function () {
@@ -108,4 +85,11 @@ test('clearDraft removes cached data', function () {
 
 test('restoreDraft returns null when no draft exists', function () {
     expect(AutosaveManager::restoreDraft('filament-autosave:nonexistent:key'))->toBeNull();
+});
+
+test('restoreDraft returns null when cached value is not an array', function () {
+    $key = 'filament-autosave:test:string';
+    Cache::put($key, 'not-an-array', 3600);
+
+    expect(AutosaveManager::restoreDraft($key))->toBeNull();
 });

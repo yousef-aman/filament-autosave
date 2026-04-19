@@ -3,18 +3,25 @@
 namespace YousefAman\FilamentAutosave;
 
 use Illuminate\Support\Facades\Validator;
+use Livewire\Features\SupportFileUploads\TemporaryUploadedFile;
 
 trait HasAutosaveBase
 {
-    protected bool $autosaveEnabled = true;
+    public bool $autosaveEnabled = true;
+
+    public string $autosaveSnapshotHash = '';
 
     protected int $autosaveDebounce = 0;
 
+    /** @var array<string> */
     protected array $autosaveExcept = [];
 
     protected bool $isAutosaving = false;
 
-    public string $autosaveSnapshotHash = '';
+    public function isAutosaveEnabled(): bool
+    {
+        return $this->autosaveEnabled;
+    }
 
     public function getAutosaveDebounce(): int
     {
@@ -22,72 +29,18 @@ trait HasAutosaveBase
             return $this->autosaveDebounce;
         }
 
-        try {
-            return AutosavePlugin::get()->getDebounce();
-        } catch (\Throwable) {
-            return config('filament-autosave.debounce', 1500);
-        }
+        return AutosavePlugin::tryGet()?->getDebounce()
+            ?? config('filament-autosave.debounce', 1500);
     }
 
+    /** @return array<string> */
     public function getAutosaveExcept(): array
     {
-        $pageExcept = $this->autosaveExcept;
-        $configExcept = config('filament-autosave.except', []);
-
-        try {
-            $pluginExcept = AutosavePlugin::get()->getExcept();
-        } catch (\Throwable) {
-            $pluginExcept = [];
-        }
-
-        return array_values(array_unique(array_merge($configExcept, $pluginExcept, $pageExcept)));
-    }
-
-    public function isAutosaveEnabled(): bool
-    {
-        return $this->autosaveEnabled;
-    }
-
-    /**
-     * @param  array<string, mixed>  $fields
-     * @return array<string, mixed>
-     */
-    protected function validateAutosaveFields(array $fields): array
-    {
-        $allRules = $this->getAutosaveValidationRules();
-
-        if (empty($allRules)) {
-            return $fields;
-        }
-
-        $rules = array_intersect_key($allRules, $fields);
-
-        if (empty($rules)) {
-            return $fields;
-        }
-
-        $validator = Validator::make($fields, $rules);
-
-        if ($validator->fails()) {
-            $failedKeys = array_keys($validator->failed());
-
-            return array_diff_key($fields, array_flip($failedKeys));
-        }
-
-        return $fields;
-    }
-
-    protected function syncSavedDataHash(): void
-    {
-        if (property_exists($this, 'savedDataHash')) {
-            $this->savedDataHash = AutosaveManager::snapshotHash($this->getAutosaveData());
-        }
-    }
-
-    /** @return array<string, mixed> */
-    protected function getAutosaveValidationRules(): array
-    {
-        return [];
+        return array_values(array_unique([
+            ...config('filament-autosave.except', []),
+            ...(AutosavePlugin::tryGet()?->getExcept() ?? []),
+            ...$this->autosaveExcept,
+        ]));
     }
 
     /**
@@ -99,81 +52,119 @@ trait HasAutosaveBase
         return $data;
     }
 
-    /** @return array<string> */
-    protected function getAutosaveForms(): array
+    /** @return array<string, mixed> */
+    protected function getAutosaveValidationRules(): array
     {
-        return ['form'];
+        return [];
     }
 
     /** @return array<string, mixed> */
     protected function getAutosaveData(): array
     {
-        foreach ($this->getAutosaveForms() as $formName) {
-            try {
-                if (! method_exists($this, $formName)) {
-                    continue;
-                }
+        $form = $this->resolveAutosaveForm();
 
-                $form = $this->{$formName}();
-
-                if ($form && method_exists($form, 'getRawState')) {
-                    return $this->sanitizeFormState($form->getRawState());
-                }
-            } catch (\Throwable) {
-                continue;
-            }
+        if ($form !== null) {
+            return $this->stripFileUploads($form->getRawState());
         }
 
-        return $this->data ?? [];
+        return $this->stripFileUploads($this->data ?? []);
     }
 
-    /** @param array<string, mixed> $draft */
+    /** @param  array<string, mixed>  $draft */
     protected function fillAutosaveData(array $draft): void
     {
-        foreach ($this->getAutosaveForms() as $formName) {
-            try {
-                if (! method_exists($this, $formName)) {
-                    continue;
-                }
+        $form = $this->resolveAutosaveForm();
 
-                $form = $this->{$formName}();
+        if ($form !== null) {
+            $form->fill($draft);
 
-                if ($form && method_exists($form, 'fill')) {
-                    $form->fill($draft);
-
-                    return;
-                }
-            } catch (\Throwable) {
-                continue;
-            }
+            return;
         }
 
         $this->data = array_merge($this->data ?? [], $draft);
     }
 
     /**
+     * Normalize, filter, and exclude reserved fields from form state before persistence.
+     *
      * @param  array<string, mixed>  $data
      * @return array<string, mixed>
      */
-    protected function sanitizeFormState(array $data): array
+    protected function prepareAutosavePayload(array $data): array
     {
-        return array_filter($data, fn ($value) => $this->isSerializable($value));
+        return AutosaveManager::excludeFields(
+            $this->stripFileUploads($data),
+            $this->getAutosaveExcept(),
+        );
     }
 
-    protected function isSerializable(mixed $value): bool
+    /**
+     * Drop fields that would fail validation, keeping valid ones.
+     *
+     * @param  array<string, mixed>  $fields
+     * @return array<string, mixed>
+     */
+    protected function validateAutosaveFields(array $fields): array
     {
-        if (is_object($value)) {
-            return false;
+        $rules = array_intersect_key($this->getAutosaveValidationRules(), $fields);
+
+        if (empty($rules)) {
+            return $fields;
         }
 
-        if (is_array($value)) {
-            foreach ($value as $nested) {
-                if (! $this->isSerializable($nested)) {
-                    return false;
-                }
+        $validator = Validator::make($fields, $rules);
+
+        if (! $validator->fails()) {
+            return $fields;
+        }
+
+        return array_diff_key($fields, array_flip(array_keys($validator->failed())));
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     * @return array<string, mixed>
+     */
+    protected function stripFileUploads(array $data): array
+    {
+        foreach ($data as $key => $value) {
+            if ($this->containsFileUpload($value)) {
+                unset($data[$key]);
             }
         }
 
-        return true;
+        return $data;
+    }
+
+    protected function containsFileUpload(mixed $value): bool
+    {
+        if ($value instanceof TemporaryUploadedFile) {
+            return true;
+        }
+
+        if (! is_array($value)) {
+            return false;
+        }
+
+        foreach ($value as $nested) {
+            if ($this->containsFileUpload($nested)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    protected function resolveAutosaveForm(): ?object
+    {
+        try {
+            $form = $this->form ?? null;
+        } catch (\Throwable) {
+            return null;
+        }
+
+        return (is_object($form) && method_exists($form, 'getRawState') && method_exists($form, 'fill'))
+            ? $form
+            : null;
     }
 }

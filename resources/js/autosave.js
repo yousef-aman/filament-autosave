@@ -1,4 +1,4 @@
-export default function autosave({ debounce = 1500, enabled = true, mode = 'edit' }) {
+export default function autosave({ debounce = 1500, mode = 'edit' }) {
     return {
         status: 'idle',
         timestamp: null,
@@ -8,7 +8,7 @@ export default function autosave({ debounce = 1500, enabled = true, mode = 'edit
         mode: mode,
 
         init() {
-            if (! enabled) {
+            if (this.$wire.autosaveEnabled === false) {
                 return
             }
 
@@ -26,7 +26,7 @@ export default function autosave({ debounce = 1500, enabled = true, mode = 'edit
                     }
 
                     this.onDataChanged()
-                }
+                },
             )
 
             this.$wire.$on('autosave-status', (params) => {
@@ -73,16 +73,6 @@ export default function autosave({ debounce = 1500, enabled = true, mode = 'edit
             }
         },
 
-        async undo() {
-            this.status = 'saving'
-
-            try {
-                await this.$wire.undoAutosave()
-            } catch (e) {
-                this.setStatus('error')
-            }
-        },
-
         async restore() {
             clearTimeout(this.timer)
             clearTimeout(this.fadeTimer)
@@ -112,7 +102,7 @@ export default function autosave({ debounce = 1500, enabled = true, mode = 'edit
             this.status = newStatus
             this.timestamp = newTimestamp
 
-            const fadeDelays = { saved: 5000, undone: 3000, restored: 3000 }
+            const fadeDelays = { saved: 5000, restored: 3000 }
 
             if (fadeDelays[newStatus]) {
                 this.fadeTimer = setTimeout(() => {
@@ -120,7 +110,7 @@ export default function autosave({ debounce = 1500, enabled = true, mode = 'edit
                 }, fadeDelays[newStatus])
             }
 
-            if (newStatus === 'saved' || newStatus === 'undone' || newStatus === 'idle' || newStatus === 'restored') {
+            if (newStatus === 'saved' || newStatus === 'idle' || newStatus === 'restored') {
                 this.previousData = JSON.stringify(this.$wire.data)
             }
         },

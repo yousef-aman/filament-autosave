@@ -16,34 +16,11 @@ trait HasAutosaveForCreate
             return;
         }
 
-        $draft = AutosaveManager::restoreDraft($this->getAutosaveCacheKey());
-
-        if ($draft) {
-            $this->autosaveHasDraft = true;
-        }
-
-        $this->initializeAutosaveForCreate();
-    }
-
-    public function initializeAutosaveForCreate(): void
-    {
-        if (! $this->autosaveEnabled) {
-            return;
-        }
+        $this->autosaveHasDraft = AutosaveManager::restoreDraft($this->getAutosaveCacheKey()) !== null;
 
         $this->autosaveSnapshotHash = AutosaveManager::snapshotHash(
-            AutosaveManager::excludeFields($this->getAutosaveData(), $this->getAutosaveExcept())
+            $this->prepareAutosavePayload($this->getAutosaveData())
         );
-    }
-
-    public function create(bool $another = false): void
-    {
-        $parent = get_parent_class($this);
-
-        if ($parent && method_exists($parent, 'create')) {
-            parent::create($another);
-            $this->clearDraftAfterCreate();
-        }
     }
 
     public function autosave(): void
@@ -59,22 +36,18 @@ trait HasAutosaveForCreate
                 $this->authorizeAccess();
             }
 
-            $except = $this->getAutosaveExcept();
-            $data = AutosaveManager::excludeFields($this->getAutosaveData(), $except);
+            $data = $this->prepareAutosavePayload($this->getAutosaveData());
 
-            $currentHash = AutosaveManager::snapshotHash($data);
-            if ($currentHash === $this->autosaveSnapshotHash) {
+            if (AutosaveManager::snapshotHash($data) === $this->autosaveSnapshotHash) {
                 $this->dispatch('autosave-status', status: 'idle');
 
                 return;
             }
 
-            $data = $this->beforeAutosave($data);
-            $validData = $this->validateAutosaveFields($data);
+            $payload = $this->validateAutosaveFields($this->beforeAutosave($data));
+            $payload = array_filter($payload, static fn ($value) => $value !== null && $value !== '' && $value !== []);
 
-            $validData = array_filter($validData, fn ($value) => $value !== null && $value !== '' && $value !== []);
-
-            if (empty($validData)) {
+            if (empty($payload)) {
                 $this->dispatch('autosave-status', status: 'idle');
 
                 return;
@@ -82,14 +55,14 @@ trait HasAutosaveForCreate
 
             AutosaveManager::storeDraft(
                 $this->getAutosaveCacheKey(),
-                $validData,
+                $payload,
                 $this->getAutosaveCacheTtl(),
             );
 
-            $this->autosaveSnapshotHash = AutosaveManager::snapshotHash($validData);
-            $this->syncSavedDataHash();
+            $this->autosaveSnapshotHash = AutosaveManager::snapshotHash($data);
 
-            $this->dispatch('autosave-status',
+            $this->dispatch(
+                'autosave-status',
                 status: 'saved',
                 timestamp: now()->format('g:i A'),
             );
@@ -111,16 +84,18 @@ trait HasAutosaveForCreate
 
             $draft = AutosaveManager::restoreDraft($this->getAutosaveCacheKey());
 
-            if (! $draft) {
+            if ($draft === null) {
                 return;
             }
+
+            $draft = $this->stripFileUploads($draft);
+            $draft = AutosaveManager::excludeFields($draft, $this->getAutosaveExcept());
 
             $this->fillAutosaveData($draft);
 
             $this->autosaveSnapshotHash = AutosaveManager::snapshotHash(
-                AutosaveManager::excludeFields($this->getAutosaveData(), $this->getAutosaveExcept())
+                $this->prepareAutosavePayload($this->getAutosaveData())
             );
-            $this->syncSavedDataHash();
             $this->autosaveHasDraft = false;
 
             $this->dispatch('autosave-status', status: 'restored');
@@ -133,15 +108,28 @@ trait HasAutosaveForCreate
 
     public function discardDraft(): void
     {
-        AutosaveManager::clearDraft($this->getAutosaveCacheKey());
-        $this->autosaveHasDraft = false;
+        $this->clearAutosaveDraft();
 
         $this->dispatch('autosave-status', status: 'idle');
     }
 
-    protected function clearDraftAfterCreate(): void
+    public function clearAutosaveDraft(): void
     {
         AutosaveManager::clearDraft($this->getAutosaveCacheKey());
+        $this->autosaveHasDraft = false;
+    }
+
+    public function create(bool $another = false): void
+    {
+        if (! method_exists(parent::class, 'create')) {
+            return;
+        }
+
+        parent::create($another);
+
+        if ($this->getRecord()?->exists) {
+            $this->clearAutosaveDraft();
+        }
     }
 
     protected function getAutosaveCacheKey(): string
@@ -151,10 +139,7 @@ trait HasAutosaveForCreate
 
     protected function getAutosaveCacheTtl(): int
     {
-        try {
-            return AutosavePlugin::get()->getCacheTtl();
-        } catch (\Throwable) {
-            return config('filament-autosave.cache_ttl', 24);
-        }
+        return AutosavePlugin::tryGet()?->getCacheTtl()
+            ?? config('filament-autosave.cache_ttl', 24);
     }
 }

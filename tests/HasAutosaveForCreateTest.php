@@ -1,6 +1,8 @@
 <?php
 
+use Carbon\Carbon;
 use Illuminate\Support\Facades\Cache;
+use Livewire\Features\SupportFileUploads\TemporaryUploadedFile;
 use YousefAman\FilamentAutosave\AutosaveManager;
 use YousefAman\FilamentAutosave\HasAutosaveForCreate;
 
@@ -8,66 +10,121 @@ beforeEach(function () {
     Cache::flush();
 });
 
-function createPageStub(array $data = []): object
+function makeCreatePage(array $formState = []): object
 {
-    return new class($data)
+    return new class($formState)
     {
         use HasAutosaveForCreate;
 
-        public ?array $data;
+        public object $form;
 
+        public ?array $data = [];
+
+        /** @var array<int, array<string, mixed>> */
         public array $dispatched = [];
 
-        public function __construct(array $data)
+        public function __construct(array $formState)
         {
-            $this->data = $data;
-        }
+            $this->form = new class($formState)
+            {
+                private array $state;
 
-        public function authorizeAccess(): void {}
+                public function __construct(array $state)
+                {
+                    $this->state = $state;
+                }
+
+                public function getRawState(): array
+                {
+                    return $this->state;
+                }
+
+                public function fill(array $data): void
+                {
+                    $this->state = $data;
+                }
+
+                public function setState(array $state): void
+                {
+                    $this->state = $state;
+                }
+            };
+        }
 
         public function dispatch(string $event, ...$params): void
         {
             $this->dispatched[] = ['event' => $event, 'params' => $params];
         }
+
+        public function authorizeAccess(): void
+        {
+            //
+        }
     };
 }
 
 test('autosave stores draft in cache', function () {
-    $page = createPageStub(['title' => 'My Article', 'body' => 'Content']);
-    $page->initializeAutosaveForCreate();
+    $page = makeCreatePage(['title' => 'Original', 'body' => 'Content']);
+    $page->mountHasAutosaveForCreate();
 
-    $page->data = ['title' => 'Updated', 'body' => 'Content'];
+    $page->form->setState(['title' => 'Updated', 'body' => 'Content']);
     $page->autosave();
 
     $key = AutosaveManager::cacheKey(get_class($page));
     expect(Cache::get($key))->toBe(['title' => 'Updated', 'body' => 'Content']);
 });
 
-test('restoreDraft fills data from cache', function () {
-    $page = createPageStub(['title' => '', 'body' => '']);
+test('autosave is skipped when disabled', function () {
+    $page = makeCreatePage(['title' => 'Any']);
+    $page->autosaveEnabled = false;
+
+    $page->form->setState(['title' => 'Changed']);
+    $page->autosave();
 
     $key = AutosaveManager::cacheKey(get_class($page));
-    Cache::put($key, ['title' => 'Cached Title', 'body' => 'Cached Body'], 3600);
-
-    $page->restoreDraft();
-
-    expect($page->data)->toBe(['title' => 'Cached Title', 'body' => 'Cached Body']);
-});
-
-test('discardDraft clears cache', function () {
-    $page = createPageStub(['title' => '', 'body' => '']);
-
-    $key = AutosaveManager::cacheKey(get_class($page));
-    Cache::put($key, ['title' => 'Draft'], 3600);
-
-    $page->discardDraft();
-
     expect(Cache::get($key))->toBeNull();
 });
 
-test('mountHasAutosaveForCreate sets hasDraft when draft exists', function () {
-    $page = createPageStub(['title' => '', 'body' => '']);
+test('autosave skips persistence when data unchanged', function () {
+    $page = makeCreatePage(['title' => 'Same']);
+    $page->mountHasAutosaveForCreate();
 
+    $page->autosave();
+
+    $key = AutosaveManager::cacheKey(get_class($page));
+    expect(Cache::get($key))->toBeNull();
+    expect($page->dispatched)->toHaveCount(1);
+    expect($page->dispatched[0]['params'])->toHaveKey('status', 'idle');
+});
+
+test('autosave excludes reserved fields', function () {
+    $page = makeCreatePage(['title' => 'A', 'password' => 'secret']);
+    (fn () => $this->autosaveExcept = ['password'])->call($page);
+    $page->mountHasAutosaveForCreate();
+
+    $page->form->setState(['title' => 'B', 'password' => 'newsecret']);
+    $page->autosave();
+
+    $key = AutosaveManager::cacheKey(get_class($page));
+    $cached = Cache::get($key);
+
+    expect($cached)->toHaveKey('title', 'B');
+    expect($cached)->not->toHaveKey('password');
+});
+
+test('autosave strips empty values from payload', function () {
+    $page = makeCreatePage(['title' => 'A']);
+    $page->mountHasAutosaveForCreate();
+
+    $page->form->setState(['title' => 'B', 'note' => '', 'tags' => []]);
+    $page->autosave();
+
+    $key = AutosaveManager::cacheKey(get_class($page));
+    expect(Cache::get($key))->toBe(['title' => 'B']);
+});
+
+test('mountHasAutosaveForCreate sets hasDraft when draft exists', function () {
+    $page = makeCreatePage();
     $key = AutosaveManager::cacheKey(get_class($page));
     Cache::put($key, ['title' => 'Saved Draft'], 3600);
 
@@ -76,392 +133,104 @@ test('mountHasAutosaveForCreate sets hasDraft when draft exists', function () {
     expect($page->autosaveHasDraft)->toBeTrue();
 });
 
-test('mountHasAutosaveForCreate does nothing when no draft exists', function () {
-    $page = createPageStub(['title' => '', 'body' => '']);
+test('mountHasAutosaveForCreate leaves hasDraft false when no draft', function () {
+    $page = makeCreatePage();
 
     $page->mountHasAutosaveForCreate();
 
     expect($page->autosaveHasDraft)->toBeFalse();
 });
 
-test('autosave respects autosaveExcept fields', function () {
-    $page = new class(['title' => 'Test', 'password' => 'secret'])
-    {
-        use HasAutosaveForCreate;
-
-        public ?array $data;
-
-        public array $dispatched = [];
-
-        public function __construct(array $data)
-        {
-            $this->data = $data;
-            $this->autosaveExcept = ['password'];
-        }
-
-        public function authorizeAccess(): void {}
-
-        public function dispatch(string $event, ...$params): void
-        {
-            $this->dispatched[] = ['event' => $event, 'params' => $params];
-        }
-    };
-
-    $page->initializeAutosaveForCreate();
-    $page->data = ['title' => 'Updated', 'password' => 'newsecret'];
-    $page->autosave();
-
+test('restoreDraft fills the form and flips hasDraft', function () {
+    $page = makeCreatePage(['title' => '']);
     $key = AutosaveManager::cacheKey(get_class($page));
-    $cached = Cache::get($key);
+    Cache::put($key, ['title' => 'Draft Title'], 3600);
+    $page->autosaveHasDraft = true;
 
-    expect($cached)->toHaveKey('title', 'Updated');
-    expect($cached)->not->toHaveKey('password');
+    $page->restoreDraft();
+
+    expect($page->form->getRawState())->toBe(['title' => 'Draft Title']);
+    expect($page->autosaveHasDraft)->toBeFalse();
 });
 
-test('autosave does not run when disabled', function () {
-    $page = new class(['title' => 'Test'])
-    {
-        use HasAutosaveForCreate;
+test('restoreDraft does nothing when no draft exists', function () {
+    $page = makeCreatePage(['title' => 'Empty']);
 
-        public ?array $data;
+    $page->restoreDraft();
 
-        public array $dispatched = [];
+    expect($page->dispatched)->toBeEmpty();
+});
 
-        public function __construct(array $data)
-        {
-            $this->data = $data;
-            $this->autosaveEnabled = false;
-        }
-
-        public function authorizeAccess(): void {}
-
-        public function dispatch(string $event, ...$params): void
-        {
-            $this->dispatched[] = ['event' => $event, 'params' => $params];
-        }
-    };
-
-    $page->data = ['title' => 'Changed'];
-    $page->autosave();
-
+test('restoreDraft excludes reserved fields from cached data', function () {
+    $page = makeCreatePage();
+    (fn () => $this->autosaveExcept = ['password'])->call($page);
     $key = AutosaveManager::cacheKey(get_class($page));
+    Cache::put($key, ['title' => 'Hello', 'password' => 'leaked'], 3600);
+
+    $page->restoreDraft();
+
+    expect($page->form->getRawState())->toBe(['title' => 'Hello']);
+});
+
+test('discardDraft clears cache and flips hasDraft', function () {
+    $page = makeCreatePage();
+    $key = AutosaveManager::cacheKey(get_class($page));
+    Cache::put($key, ['title' => 'Draft'], 3600);
+    $page->autosaveHasDraft = true;
+
+    $page->discardDraft();
+
     expect(Cache::get($key))->toBeNull();
+    expect($page->autosaveHasDraft)->toBeFalse();
 });
 
-test('autosave skips when data has not changed since snapshot', function () {
-    $page = createPageStub(['title' => 'Same']);
-    $page->initializeAutosaveForCreate();
-    $page->autosave();
+test('stripFileUploads drops arrays containing file uploads', function () {
+    $page = makeCreatePage();
 
-    expect($page->dispatched)->toHaveCount(1);
-    expect($page->dispatched[0]['params'])->toHaveKey('status', 'idle');
-});
+    $upload = Mockery::mock(TemporaryUploadedFile::class);
 
-test('sanitizeFormState removes top-level objects', function () {
-    $page = new class
-    {
-        use \YousefAman\FilamentAutosave\HasAutosaveForCreate;
-
-        public function testSanitize(array $data): array
-        {
-            return $this->sanitizeFormState($data);
-        }
-    };
-
-    $fakeFile = new \stdClass;
-    $result = $page->testSanitize([
-        'title' => 'hello',
-        'file' => $fakeFile,
-        'count' => 42,
+    $result = (fn (array $d) => $this->stripFileUploads($d))->call($page, [
+        'title' => 'Hello',
+        'attachments' => [$upload],
+        'count' => 5,
     ]);
 
-    expect($result)->toBe(['title' => 'hello', 'count' => 42]);
+    expect($result)->toBe(['title' => 'Hello', 'count' => 5]);
 });
 
-test('sanitizeFormState removes arrays containing objects recursively', function () {
-    $page = new class
-    {
-        use \YousefAman\FilamentAutosave\HasAutosaveForCreate;
+test('stripFileUploads preserves scalars and non-upload objects', function () {
+    $page = makeCreatePage();
 
-        public function testSanitize(array $data): array
-        {
-            return $this->sanitizeFormState($data);
-        }
-    };
+    $carbon = Carbon::parse('2026-04-20');
 
-    $result = $page->testSanitize([
-        'title' => 'hello',
-        'items' => [
-            ['name' => 'a', 'file' => new \stdClass],
-            ['name' => 'b'],
-        ],
+    $result = (fn (array $d) => $this->stripFileUploads($d))->call($page, [
+        'title' => 'Hello',
+        'count' => 42,
+        'active' => true,
+        'tags' => ['a', 'b'],
+        'at' => $carbon,
     ]);
 
-    expect($result)->toBe(['title' => 'hello']);
+    expect($result)->toHaveKey('title', 'Hello');
+    expect($result)->toHaveKey('count', 42);
+    expect($result)->toHaveKey('active', true);
+    expect($result)->toHaveKey('tags');
+    expect($result)->toHaveKey('at');
 });
 
-test('sanitizeFormState preserves scalars nulls booleans and nested scalar arrays', function () {
-    $page = new class
-    {
-        use \YousefAman\FilamentAutosave\HasAutosaveForCreate;
+test('autosave does not re-save unchanged data on subsequent ticks', function () {
+    $page = makeCreatePage(['title' => 'Initial']);
+    $page->mountHasAutosaveForCreate();
 
-        public function testSanitize(array $data): array
-        {
-            return $this->sanitizeFormState($data);
-        }
-    };
-
-    $input = [
-        'title' => 'hello',
-        'count' => 42,
-        'is_active' => true,
-        'nothing' => null,
-        'tags' => ['php', 'laravel'],
-        'metadata' => ['key' => 'value', 'nested' => ['a', 'b']],
-    ];
-
-    expect($page->testSanitize($input))->toBe($input);
-});
-
-test('getAutosaveData uses form getRawState when form method exists', function () {
-    $page = new class
-    {
-        use \YousefAman\FilamentAutosave\HasAutosaveForCreate;
-
-        public ?array $data = ['ignored' => 'should not be used'];
-
-        public function form(): object
-        {
-            return new class
-            {
-                public function getRawState(): array
-                {
-                    return ['title' => 'from-form', 'nested' => ['key' => 'value']];
-                }
-            };
-        }
-
-        public function testGet(): array
-        {
-            return $this->getAutosaveData();
-        }
-    };
-
-    expect($page->testGet())->toBe(['title' => 'from-form', 'nested' => ['key' => 'value']]);
-});
-
-test('getAutosaveData falls back to data when no form method', function () {
-    $page = new class
-    {
-        use \YousefAman\FilamentAutosave\HasAutosaveForCreate;
-
-        public ?array $data = ['title' => 'from-data'];
-
-        public function testGet(): array
-        {
-            return $this->getAutosaveData();
-        }
-    };
-
-    expect($page->testGet())->toBe(['title' => 'from-data']);
-});
-
-test('getAutosaveData falls back when form method throws', function () {
-    $page = new class
-    {
-        use \YousefAman\FilamentAutosave\HasAutosaveForCreate;
-
-        public ?array $data = ['title' => 'from-data'];
-
-        public function form(): object
-        {
-            throw new \RuntimeException('form unavailable');
-        }
-
-        public function testGet(): array
-        {
-            return $this->getAutosaveData();
-        }
-    };
-
-    expect($page->testGet())->toBe(['title' => 'from-data']);
-});
-
-test('getAutosaveData falls back when getRawState throws', function () {
-    $page = new class
-    {
-        use \YousefAman\FilamentAutosave\HasAutosaveForCreate;
-
-        public ?array $data = ['title' => 'from-data'];
-
-        public function form(): object
-        {
-            return new class
-            {
-                public function getRawState(): array
-                {
-                    throw new \RuntimeException('state unavailable');
-                }
-            };
-        }
-
-        public function testGet(): array
-        {
-            return $this->getAutosaveData();
-        }
-    };
-
-    expect($page->testGet())->toBe(['title' => 'from-data']);
-});
-
-test('fillAutosaveData calls form fill when available', function () {
-    $page = new class
-    {
-        use \YousefAman\FilamentAutosave\HasAutosaveForCreate;
-
-        public ?array $data = [];
-
-        public array $filledWith = [];
-
-        public function form(): object
-        {
-            $page = $this;
-
-            return new class($page)
-            {
-                public function __construct(public object $page) {}
-
-                public function fill(array $data): void
-                {
-                    $this->page->filledWith = $data;
-                }
-            };
-        }
-
-        public function testFill(array $draft): void
-        {
-            $this->fillAutosaveData($draft);
-        }
-    };
-
-    $page->testFill(['title' => 'restored']);
-
-    expect($page->filledWith)->toBe(['title' => 'restored']);
-});
-
-test('fillAutosaveData falls back to data merge when no form', function () {
-    $page = new class
-    {
-        use \YousefAman\FilamentAutosave\HasAutosaveForCreate;
-
-        public ?array $data = ['existing' => 'keep'];
-
-        public function testFill(array $draft): void
-        {
-            $this->fillAutosaveData($draft);
-        }
-    };
-
-    $page->testFill(['new' => 'value']);
-
-    expect($page->data)->toBe(['existing' => 'keep', 'new' => 'value']);
-});
-
-test('getAutosaveForms override allows custom form name', function () {
-    $page = new class
-    {
-        use \YousefAman\FilamentAutosave\HasAutosaveForCreate;
-
-        public ?array $data = [];
-
-        public function editForm(): object
-        {
-            return new class
-            {
-                public function getRawState(): array
-                {
-                    return ['title' => 'from-custom-form'];
-                }
-            };
-        }
-
-        protected function getAutosaveForms(): array
-        {
-            return ['editForm'];
-        }
-
-        public function testGet(): array
-        {
-            return $this->getAutosaveData();
-        }
-    };
-
-    expect($page->testGet())->toBe(['title' => 'from-custom-form']);
-});
-
-test('autosave saves form getRawState data including custom fields', function () {
-    $formStateHolder = new class
-    {
-        public array $state = ['title' => 'initial'];
-    };
-
-    $page = new class($formStateHolder)
-    {
-        use HasAutosaveForCreate;
-
-        public ?array $data = [];
-
-        public array $dispatched = [];
-
-        public object $stateHolder;
-
-        public function __construct(object $stateHolder)
-        {
-            $this->stateHolder = $stateHolder;
-        }
-
-        public function authorizeAccess(): void {}
-
-        public function dispatch(string $event, ...$params): void
-        {
-            $this->dispatched[] = ['event' => $event, 'params' => $params];
-        }
-
-        public function form(): object
-        {
-            $holder = $this->stateHolder;
-
-            return new class($holder)
-            {
-                public function __construct(public object $holder) {}
-
-                public function getRawState(): array
-                {
-                    return $this->holder->state;
-                }
-
-                public function fill(array $data): void
-                {
-                    $this->holder->state = $data;
-                }
-            };
-        }
-    };
-
-    $page->initializeAutosaveForCreate();
-
-    $formStateHolder->state = [
-        'title' => 'from-form',
-        'custom_field' => 'not-in-data',
-        'nested' => ['key' => 'value'],
-    ];
-
+    $page->form->setState(['title' => 'Changed']);
     $page->autosave();
 
     $key = AutosaveManager::cacheKey(get_class($page));
-    $cached = Cache::get($key);
+    $firstWrite = Cache::get($key);
+    Cache::forget($key);
 
-    expect($cached)->toHaveKey('custom_field', 'not-in-data');
-    expect($cached)->toHaveKey('title', 'from-form');
-    expect($cached)->toHaveKey('nested');
+    $page->autosave();
+
+    expect(Cache::get($key))->toBeNull();
+    expect($firstWrite)->toBe(['title' => 'Changed']);
 });

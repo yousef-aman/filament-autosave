@@ -1,6 +1,5 @@
 @php
     $debounce = $debounce ?? 1500;
-    $enabled = $enabled ?? true;
     $showTimestamp = $showTimestamp ?? true;
     $mode = $mode ?? 'edit';
 @endphp
@@ -8,7 +7,7 @@
 <div
     x-load
     x-load-src="{{ \Filament\Support\Facades\FilamentAsset::getAlpineComponentSrc('autosave', 'yousefaman/filament-autosave') }}"
-    x-data="autosave({ debounce: {{ $debounce }}, enabled: {{ $enabled ? 'true' : 'false' }}, mode: '{{ $mode }}' })"
+    x-data="autosave({ debounce: {{ $debounce }}, mode: '{{ $mode }}' })"
     x-show="status !== 'idle'"
     x-transition:enter="fi-autosave-enter"
     x-transition:leave="fi-autosave-leave"
@@ -67,15 +66,6 @@
             @else
                 <span>{{ __('filament-autosave::autosave.saved') }}</span>
             @endif
-            @if($mode === 'edit')
-                <button
-                    type="button"
-                    x-on:click="undo()"
-                    class="fi-autosave-undo"
-                >
-                    {{ __('filament-autosave::autosave.undo') }}
-                </button>
-            @endif
         </span>
     </template>
 
@@ -86,16 +76,6 @@
                 class="fi-autosave-icon"
             />
             <span>{{ __('filament-autosave::autosave.restored') }}</span>
-        </span>
-    </template>
-
-    <template x-if="status === 'undone'">
-        <span class="fi-autosave-undone">
-            <x-filament::icon
-                icon="heroicon-m-arrow-uturn-left"
-                class="fi-autosave-icon"
-            />
-            <span>{{ __('filament-autosave::autosave.undone') }}</span>
         </span>
     </template>
 

@@ -18,8 +18,10 @@ class AutosavePlugin implements Plugin
 
     protected int|Closure|null $debounce = null;
 
+    /** @var array<string> */
     protected array $except = [];
 
+    /** @var array<class-string> */
     protected array $exceptPages = [];
 
     protected bool|Closure $showTimestamp = true;
@@ -27,6 +29,9 @@ class AutosavePlugin implements Plugin
     protected string $indicatorPosition = 'before';
 
     protected int|Closure|null $cacheTtl = null;
+
+    /** @var array<class-string, 'edit'|'create'|null> */
+    protected static array $modeCache = [];
 
     public function getId(): string
     {
@@ -43,6 +48,15 @@ class AutosavePlugin implements Plugin
         return filament(app(static::class)->getId());
     }
 
+    public static function tryGet(): ?static
+    {
+        try {
+            return static::get();
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
     public function global(bool|Closure $condition = true): static
     {
         $this->isGlobal = $condition;
@@ -57,6 +71,7 @@ class AutosavePlugin implements Plugin
         return $this;
     }
 
+    /** @param  array<string>  $fields */
     public function except(array $fields): static
     {
         $this->except = $fields;
@@ -64,6 +79,7 @@ class AutosavePlugin implements Plugin
         return $this;
     }
 
+    /** @param  array<class-string>  $pages */
     public function exceptPages(array $pages): static
     {
         $this->exceptPages = $pages;
@@ -106,11 +122,13 @@ class AutosavePlugin implements Plugin
         return config('filament-autosave.debounce', 1500);
     }
 
+    /** @return array<string> */
     public function getExcept(): array
     {
         return $this->except;
     }
 
+    /** @return array<class-string> */
     public function getExceptPages(): array
     {
         return $this->exceptPages;
@@ -147,29 +165,57 @@ class AutosavePlugin implements Plugin
             : PanelsRenderHook::PAGE_HEADER_ACTIONS_BEFORE;
 
         FilamentView::registerRenderHook($hookName, function (array $scopes) {
-            $pageClass = collect($scopes)->first(
-                fn ($scope) => is_string($scope)
-                    && class_exists($scope)
-                    && (in_array(HasAutosave::class, class_uses_recursive($scope))
-                        || in_array(HasAutosaveForCreate::class, class_uses_recursive($scope)))
-            );
+            $mode = $this->resolveAutosaveMode($scopes);
 
-            if (! $pageClass || in_array($pageClass, $this->exceptPages)) {
+            if ($mode === null) {
                 return '';
             }
-
-            $mode = in_array(HasAutosaveForCreate::class, class_uses_recursive($pageClass))
-                ? 'create'
-                : 'edit';
 
             return new HtmlString(
                 view('filament-autosave::autosave-indicator', [
                     'debounce' => $this->getDebounce(),
-                    'enabled' => true,
                     'showTimestamp' => $this->shouldShowTimestamp(),
                     'mode' => $mode,
                 ])->render()
             );
         });
+    }
+
+    /** @param  array<mixed>  $scopes */
+    protected function resolveAutosaveMode(array $scopes): ?string
+    {
+        foreach ($scopes as $scope) {
+            if (! is_string($scope) || ! class_exists($scope)) {
+                continue;
+            }
+
+            if (in_array($scope, $this->exceptPages, true)) {
+                return null;
+            }
+
+            $mode = static::$modeCache[$scope]
+                ??= $this->detectMode($scope);
+
+            if ($mode !== null) {
+                return $mode;
+            }
+        }
+
+        return null;
+    }
+
+    protected function detectMode(string $class): ?string
+    {
+        $traits = class_uses_recursive($class);
+
+        if (in_array(HasAutosaveForCreate::class, $traits, true)) {
+            return 'create';
+        }
+
+        if (in_array(HasAutosave::class, $traits, true)) {
+            return 'edit';
+        }
+
+        return null;
     }
 }
