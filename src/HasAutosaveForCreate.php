@@ -25,32 +25,14 @@ trait HasAutosaveForCreate
 
     public function autosave(): void
     {
-        if (! $this->autosaveEnabled || $this->isAutosaving) {
-            return;
-        }
-
-        $this->isAutosaving = true;
-
-        try {
-            if (method_exists($this, 'authorizeAccess')) {
-                $this->authorizeAccess();
-            }
-
-            $data = $this->prepareAutosavePayload($this->getAutosaveData());
-
-            if (AutosaveManager::snapshotHash($data) === $this->autosaveSnapshotHash) {
-                $this->dispatch('autosave-status', status: 'idle');
-
-                return;
-            }
-
-            $payload = $this->validateAutosaveFields($this->beforeAutosave($data));
-            $payload = array_filter($payload, static fn ($value) => $value !== null && $value !== '' && $value !== []);
+        $this->performAutosave(function (array $data): bool {
+            $payload = array_filter(
+                $data,
+                static fn ($value) => $value !== null && $value !== '' && $value !== [],
+            );
 
             if (empty($payload)) {
-                $this->dispatch('autosave-status', status: 'idle');
-
-                return;
+                return false;
             }
 
             AutosaveManager::storeDraft(
@@ -59,20 +41,8 @@ trait HasAutosaveForCreate
                 $this->getAutosaveCacheTtl(),
             );
 
-            $this->autosaveSnapshotHash = AutosaveManager::snapshotHash($data);
-
-            $this->dispatch(
-                'autosave-status',
-                status: 'saved',
-                timestamp: now()->format('g:i A'),
-            );
-        } catch (\Throwable $e) {
-            Log::warning('Autosave draft failed: '.$e->getMessage());
-
-            $this->dispatch('autosave-status', status: 'error');
-        } finally {
-            $this->isAutosaving = false;
-        }
+            return true;
+        });
     }
 
     public function restoreDraft(): void
@@ -88,10 +58,9 @@ trait HasAutosaveForCreate
                 return;
             }
 
-            $draft = $this->stripFileUploads($draft);
-            $draft = AutosaveManager::excludeFields($draft, $this->getAutosaveExcept());
-
-            $this->fillAutosaveData($draft);
+            $this->fillAutosaveData(
+                AutosaveManager::excludeFields($this->stripFileUploads($draft), $this->getAutosaveExcept())
+            );
 
             $this->autosaveSnapshotHash = AutosaveManager::snapshotHash(
                 $this->prepareAutosavePayload($this->getAutosaveData())

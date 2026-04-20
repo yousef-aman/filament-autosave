@@ -24,61 +24,24 @@ trait HasAutosave
 
     public function autosave(): void
     {
-        if (! $this->autosaveEnabled || $this->isAutosaving) {
-            return;
-        }
-
-        $this->isAutosaving = true;
-
-        try {
-            if (method_exists($this, 'authorizeAccess')) {
-                $this->authorizeAccess();
-            }
-
-            $data = $this->prepareAutosavePayload($this->getAutosaveData());
-
-            if (AutosaveManager::snapshotHash($data) === $this->autosaveSnapshotHash) {
-                $this->dispatch('autosave-status', status: 'idle');
-
-                return;
-            }
-
-            $data = $this->validateAutosaveFields($this->beforeAutosave($data));
-
+        $this->performAutosave(function (array $data): bool {
             if (method_exists($this, 'mutateFormDataBeforeSave')) {
                 $data = $this->mutateFormDataBeforeSave($data);
             }
 
             if (empty($data)) {
-                $this->dispatch('autosave-status', status: 'idle');
-
-                return;
+                return false;
             }
 
             $this->storeUndoSnapshot(array_keys($data));
-
             $this->handleRecordUpdate($this->getRecord(), $data);
             $this->getRecord()->refresh();
-
-            $this->autosaveSnapshotHash = AutosaveManager::snapshotHash(
-                $this->prepareAutosavePayload($this->getAutosaveData())
-            );
             $this->autosaveCanUndo = true;
 
             $this->afterAutosave($this->getRecord());
 
-            $this->dispatch(
-                'autosave-status',
-                status: 'saved',
-                timestamp: now()->format('g:i A'),
-            );
-        } catch (\Throwable $e) {
-            Log::warning('Autosave failed: '.$e->getMessage());
-
-            $this->dispatch('autosave-status', status: 'error');
-        } finally {
-            $this->isAutosaving = false;
-        }
+            return true;
+        });
     }
 
     public function undoAutosave(): void
@@ -90,8 +53,7 @@ trait HasAutosave
 
             $snapshot = Cache::get($this->getUndoCacheKey());
 
-            if (! is_array($snapshot) || empty($snapshot) || $this->snapshotHasUnsafeValues($snapshot)) {
-                Cache::forget($this->getUndoCacheKey());
+            if (! is_array($snapshot) || empty($snapshot)) {
                 $this->autosaveCanUndo = false;
 
                 return;
@@ -100,13 +62,9 @@ trait HasAutosave
             $this->handleRecordUpdate($this->getRecord(), $snapshot);
             $this->getRecord()->refresh();
 
-            // Re-fill via Filament's flow so `mutateFormDataBeforeFill`
-            // can rehydrate virtual/derived form fields.
-            if (method_exists($this, 'fillForm')) {
-                $this->fillForm();
-            } else {
-                $this->fillAutosaveData($snapshot);
-            }
+            method_exists($this, 'fillForm')
+                ? $this->fillForm()
+                : $this->fillAutosaveData($snapshot);
 
             $this->autosaveSnapshotHash = AutosaveManager::snapshotHash(
                 $this->prepareAutosavePayload($this->getAutosaveData())
@@ -123,17 +81,12 @@ trait HasAutosave
         }
     }
 
-    /**
-     * Capture the current DB values for the fields about to be overwritten,
-     * so `undoAutosave()` can restore them. Stored server-side only.
-     *
-     * @param  array<string>  $fieldKeys
-     */
+    /** @param  array<string>  $fieldKeys */
     protected function storeUndoSnapshot(array $fieldKeys): void
     {
         $record = $this->getRecord();
 
-        if (! $record || empty($fieldKeys) || ! method_exists($record, 'only')) {
+        if (! $record || empty($fieldKeys)) {
             return;
         }
 
@@ -151,10 +104,11 @@ trait HasAutosave
     }
 
     /**
-     * Round-trip casted model values through JSON so they end up as
-     * plain scalars/arrays. This keeps JSON-cast columns as arrays
-     * (so Eloquent doesn't double-encode on undo) while converting
-     * Carbon and other JsonSerializable objects to safe strings.
+     * JSON round-trip so Carbon/Enums become scalars and JSON-cast
+     * columns stay arrays (prevents Eloquent double-encoding on undo).
+     *
+     * @param  array<string, mixed>  $data
+     * @return array<string, mixed>
      */
     protected function normalizeUndoSnapshot(array $data): array
     {
@@ -171,9 +125,7 @@ trait HasAutosave
     {
         $owner = auth()->id() ?? session()->getId();
         $record = $this->getRecord();
-        $recordKey = (is_object($record) && method_exists($record, 'getKey'))
-            ? $record->getKey()
-            : 'default';
+        $recordKey = $record?->getKey() ?? 'default';
 
         return 'filament-autosave:undo:'.$owner.':'.static::class.':'.$recordKey;
     }
@@ -181,26 +133,6 @@ trait HasAutosave
     protected function getUndoTtlMinutes(): int
     {
         return 30;
-    }
-
-    /**
-     * Guard against snapshots that deserialized as objects (e.g. stale Carbon
-     * instances persisted by an older version of the plugin). Passing these
-     * back to Eloquent triggers errors like `preg_match` on `__PHP_Incomplete_Class`.
-     */
-    protected function snapshotHasUnsafeValues(array $snapshot): bool
-    {
-        foreach ($snapshot as $value) {
-            if (is_object($value)) {
-                return true;
-            }
-
-            if (is_array($value) && $this->snapshotHasUnsafeValues($value)) {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     protected function afterAutosave(object $record): void

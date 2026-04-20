@@ -2,6 +2,7 @@
 
 namespace YousefAman\FilamentAutosave;
 
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 use Livewire\Features\SupportFileUploads\TemporaryUploadedFile;
 
@@ -43,6 +44,53 @@ trait HasAutosaveBase
         ]));
     }
 
+    protected function performAutosave(callable $persist): void
+    {
+        if (! $this->autosaveEnabled || $this->isAutosaving) {
+            return;
+        }
+
+        $this->isAutosaving = true;
+
+        try {
+            if (method_exists($this, 'authorizeAccess')) {
+                $this->authorizeAccess();
+            }
+
+            $data = $this->prepareAutosavePayload($this->getAutosaveData());
+
+            if (AutosaveManager::snapshotHash($data) === $this->autosaveSnapshotHash) {
+                $this->dispatch('autosave-status', status: 'idle');
+
+                return;
+            }
+
+            $data = $this->validateAutosaveFields($this->beforeAutosave($data));
+
+            if (empty($data) || $persist($data) === false) {
+                $this->dispatch('autosave-status', status: 'idle');
+
+                return;
+            }
+
+            $this->autosaveSnapshotHash = AutosaveManager::snapshotHash(
+                $this->prepareAutosavePayload($this->getAutosaveData())
+            );
+
+            $this->dispatch(
+                'autosave-status',
+                status: 'saved',
+                timestamp: now()->format('g:i A'),
+            );
+        } catch (\Throwable $e) {
+            Log::warning('Autosave failed: '.$e->getMessage());
+
+            $this->dispatch('autosave-status', status: 'error');
+        } finally {
+            $this->isAutosaving = false;
+        }
+    }
+
     /**
      * @param  array<string, mixed>  $data
      * @return array<string, mixed>
@@ -63,11 +111,9 @@ trait HasAutosaveBase
     {
         $form = $this->resolveAutosaveForm();
 
-        if ($form !== null) {
-            return $this->stripFileUploads($form->getRawState());
-        }
-
-        return $this->stripFileUploads($this->data ?? []);
+        return $this->stripFileUploads(
+            $form !== null ? $form->getRawState() : ($this->data ?? [])
+        );
     }
 
     /** @param  array<string, mixed>  $draft */
@@ -85,8 +131,6 @@ trait HasAutosaveBase
     }
 
     /**
-     * Normalize, filter, and exclude reserved fields from form state before persistence.
-     *
      * @param  array<string, mixed>  $data
      * @return array<string, mixed>
      */
@@ -99,8 +143,6 @@ trait HasAutosaveBase
     }
 
     /**
-     * Drop fields that would fail validation, keeping valid ones.
-     *
      * @param  array<string, mixed>  $fields
      * @return array<string, mixed>
      */
@@ -157,11 +199,7 @@ trait HasAutosaveBase
 
     protected function resolveAutosaveForm(): ?object
     {
-        try {
-            $form = $this->form ?? null;
-        } catch (\Throwable) {
-            return null;
-        }
+        $form = $this->form ?? null;
 
         return (is_object($form) && method_exists($form, 'getRawState') && method_exists($form, 'fill'))
             ? $form

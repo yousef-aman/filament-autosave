@@ -77,7 +77,6 @@ function makeEditPage(array $formState = [], array $dbState = []): object
                 $this->refreshCount++;
             })
             {
-
                 public function __construct(public array $fields, public Closure $onRefresh) {}
 
                 public function refresh(): static
@@ -90,6 +89,11 @@ function makeEditPage(array $formState = [], array $dbState = []): object
                 public function only(array $keys): array
                 {
                     return array_intersect_key($this->fields, array_flip($keys));
+                }
+
+                public function getKey(): int
+                {
+                    return 1;
                 }
             };
         }
