@@ -45,6 +45,10 @@ trait HasAutosave
 
             $data = $this->validateAutosaveFields($this->beforeAutosave($data));
 
+            if (method_exists($this, 'mutateFormDataBeforeSave')) {
+                $data = $this->mutateFormDataBeforeSave($data);
+            }
+
             if (empty($data)) {
                 $this->dispatch('autosave-status', status: 'idle');
 
@@ -96,7 +100,13 @@ trait HasAutosave
             $this->handleRecordUpdate($this->getRecord(), $snapshot);
             $this->getRecord()->refresh();
 
-            $this->fillAutosaveData($snapshot);
+            // Re-fill via Filament's flow so `mutateFormDataBeforeFill`
+            // can rehydrate virtual/derived form fields.
+            if (method_exists($this, 'fillForm')) {
+                $this->fillForm();
+            } else {
+                $this->fillAutosaveData($snapshot);
+            }
 
             $this->autosaveSnapshotHash = AutosaveManager::snapshotHash(
                 $this->prepareAutosavePayload($this->getAutosaveData())
