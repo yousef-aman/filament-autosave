@@ -19,6 +19,8 @@ trait HasAutosaveForCreate
             return;
         }
 
+        $this->autosaveDebounceMs = $this->getAutosaveDebounce();
+
         $this->autosaveHasDraft = AutosaveManager::restoreDraft($this->getAutosaveCacheKey()) !== null;
 
         $this->autosaveSnapshotHash = AutosaveManager::snapshotHash(
@@ -35,6 +37,10 @@ trait HasAutosaveForCreate
             );
 
             if (empty($payload)) {
+                // Every field was cleared — drop any stale draft so it is not
+                // offered for restore later.
+                $this->clearAutosaveDraft();
+
                 return false;
             }
 
@@ -58,6 +64,8 @@ trait HasAutosaveForCreate
             $draft = AutosaveManager::restoreDraft($this->getAutosaveCacheKey());
 
             if ($draft === null) {
+                $this->dispatch('autosave-status', status: 'idle');
+
                 return;
             }
 
@@ -72,7 +80,7 @@ trait HasAutosaveForCreate
 
             $this->dispatch('autosave-status', status: 'restored');
         } catch (\Throwable $e) {
-            Log::warning('Draft restore failed: '.$e->getMessage());
+            Log::warning('Draft restore failed', ['exception' => $e::class]);
 
             $this->dispatch('autosave-status', status: 'error');
         }

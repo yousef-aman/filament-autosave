@@ -4,6 +4,7 @@ use Illuminate\Support\Facades\Cache;
 use YousefAman\FilamentAutosave\AutosaveManager;
 use YousefAman\FilamentAutosave\Tests\Fixtures\AutosaveCreateFormComponent;
 use YousefAman\FilamentAutosave\Tests\Fixtures\AutosaveEditFormComponent;
+use YousefAman\FilamentAutosave\Tests\Fixtures\AutosaveSelectEditFormComponent;
 
 /**
  * Integration tests against a REAL Filament Schema (not a hand-rolled fake).
@@ -54,6 +55,30 @@ test('edit autosave skips a required field that was left blank', function () {
 
     expect($component->written)->not->toHaveKey('slug');
     expect($component->written)->toHaveKey('title', 'Hello');
+});
+
+test('edit autosave drops a select value outside the field allowed options', function () {
+    $component = new AutosaveSelectEditFormComponent;
+    $component->mountHasAutosave();
+
+    // A crafted state injecting an out-of-options (e.g. out-of-tenant) value.
+    $component->data = ['title' => 'Hello', 'role' => 'superadmin'];
+
+    $component->autosave();
+
+    expect($component->written)->not->toHaveKey('role');
+    expect($component->written)->toHaveKey('title', 'Hello');
+});
+
+test('edit autosave keeps a select value that is a valid option', function () {
+    $component = new AutosaveSelectEditFormComponent;
+    $component->mountHasAutosave();
+
+    $component->data = ['title' => 'Hello', 'role' => 'editor'];
+
+    $component->autosave();
+
+    expect($component->written)->toHaveKey('role', 'editor');
 });
 
 test('edit autosave drops client-injected keys that are not declared form fields', function () {

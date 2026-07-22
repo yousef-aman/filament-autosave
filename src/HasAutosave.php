@@ -17,6 +17,8 @@ trait HasAutosave
             return;
         }
 
+        $this->autosaveDebounceMs = $this->getAutosaveDebounce();
+
         $this->autosaveSnapshotHash = AutosaveManager::snapshotHash(
             $this->prepareAutosavePayload($this->getAutosaveData())
         );
@@ -72,6 +74,7 @@ trait HasAutosave
 
             if (! is_array($snapshot) || empty($snapshot)) {
                 $this->autosaveCanUndo = false;
+                $this->dispatch('autosave-status', status: 'idle');
 
                 return;
             }
@@ -92,7 +95,7 @@ trait HasAutosave
 
             $this->dispatch('autosave-status', status: 'undone');
         } catch (\Throwable $e) {
-            Log::warning('Autosave undo failed: '.$e->getMessage());
+            Log::warning('Autosave undo failed', ['exception' => $e::class]);
 
             $this->dispatch('autosave-status', status: 'error');
         }
@@ -108,6 +111,17 @@ trait HasAutosave
 
         if (! $record || empty($fieldKeys)) {
             return false;
+        }
+
+        // Restrict to real stored columns: a field name that collides with a
+        // relationship or accessor must not trigger a lazy load or snapshot a
+        // non-column value that would break the undo write.
+        if (method_exists($record, 'getAttributes')) {
+            $fieldKeys = array_values(array_intersect($fieldKeys, array_keys($record->getAttributes())));
+
+            if (empty($fieldKeys)) {
+                return false;
+            }
         }
 
         $previous = $this->normalizeUndoSnapshot($record->only($fieldKeys));

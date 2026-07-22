@@ -11,6 +11,8 @@
     x-show="status !== 'idle'"
     x-transition.opacity.duration.150ms
     class="fi-autosave-indicator"
+    role="status"
+    aria-live="polite"
     x-cloak
 >
     <template x-if="status === 'draft_available'">

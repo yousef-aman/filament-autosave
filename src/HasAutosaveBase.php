@@ -13,6 +13,8 @@ trait HasAutosaveBase
 
     public string $autosaveSnapshotHash = '';
 
+    public int $autosaveDebounceMs = 0;
+
     protected int $autosaveDebounce = 0;
 
     /** @var array<string> */
@@ -66,7 +68,9 @@ trait HasAutosaveBase
                 return;
             }
 
-            $data = $this->validateAutosaveFields($this->beforeAutosave($data));
+            $data = $this->enforceFieldOptionRules(
+                $this->validateAutosaveFields($this->beforeAutosave($data))
+            );
 
             if (empty($data) || $persist($data) === false) {
                 $this->dispatch('autosave-status', status: 'idle');
@@ -81,10 +85,12 @@ trait HasAutosaveBase
             $this->dispatch(
                 'autosave-status',
                 status: 'saved',
-                timestamp: now()->format('g:i A'),
+                timestamp: now()->isoFormat('LT'),
             );
         } catch (\Throwable $e) {
-            Log::warning('Autosave failed: '.$e->getMessage());
+            // Log the type only — an exception message (e.g. a QueryException) can
+            // interpolate the user's field values, which may be sensitive.
+            Log::warning('Autosave failed', ['exception' => $e::class]);
 
             $this->dispatch('autosave-status', status: 'error');
         } finally {
@@ -218,6 +224,44 @@ trait HasAutosaveBase
             $this->stripFileUploads($data),
             $this->getAutosaveExcept(),
         );
+    }
+
+    /**
+     * Drop any value a field's own option rule would reject (Select/Radio/enum
+     * membership, incl. tenant-scoped relationship options). Autosave skips
+     * validation, so without this a crafted state could persist an out-of-scope
+     * value that a normal save rejects. Invalid fields are skipped, not blocked.
+     *
+     * @param  array<string, mixed>  $data
+     * @return array<string, mixed>
+     */
+    protected function enforceFieldOptionRules(array $data): array
+    {
+        $form = $this->resolveAutosaveForm();
+
+        if ($form === null || ! method_exists($form, 'getFlatFields')) {
+            return $data;
+        }
+
+        foreach ($form->getFlatFields(withHidden: true) as $key => $field) {
+            $name = explode('.', (string) $key, 2)[0];
+
+            if (! array_key_exists($name, $data) || ! method_exists($field, 'getInValidationRule')) {
+                continue;
+            }
+
+            $rule = $field->getInValidationRule();
+
+            if ($rule === null) {
+                continue;
+            }
+
+            if (Validator::make([$name => $data[$name]], [$name => [$rule]])->fails()) {
+                unset($data[$name]);
+            }
+        }
+
+        return $data;
     }
 
     /**

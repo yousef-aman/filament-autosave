@@ -8,7 +8,7 @@ Automatic form saving for Filament v4 and v5 with a visual status indicator and 
 ## Requirements
 
 - PHP 8.2+
-- Laravel 11+
+- Laravel 11 or 12
 - Filament v4 or v5
 - Livewire v3 or v4
 
@@ -48,6 +48,12 @@ Publish the translations (optional):
 php artisan vendor:publish --tag="filament-autosave-translations"
 ```
 
+Publish the indicator view to customize its markup (optional):
+
+```bash
+php artisan vendor:publish --tag="filament-autosave-views"
+```
+
 ## Usage
 
 ### Edit pages
@@ -72,6 +78,12 @@ write on a normal save (`dehydrateStateUsing()` transforms and casts applied,
 incomplete form never blocks the save. Relationship fields (Repeater,
 `BelongsToMany`, etc.) are `dehydrated(false)` and are therefore **not** autosaved;
 they persist on explicit form submit.
+
+Because validation is skipped, field-level rules (`minLength`, `maxValue`,
+`in:`, etc.) are **not** enforced during autosave — only on explicit submit. A
+`required` field left blank is skipped rather than written (so it never violates a
+`NOT NULL` column), and you can enforce specific rules non-blockingly via
+`getAutosaveValidationRules()` (see below).
 
 ### Create pages
 
@@ -116,7 +128,17 @@ Call `$this->clearAutosaveDraft()` from your save handler to drop the draft once
 
 ## Configuration
 
-Every option can be set at three levels, merged in this order: **config → plugin → page** (later wins, except `except` / `exceptPages` arrays which are unioned).
+Each option supports the levels listed below, merged so the **later** wins
+(`config → plugin → page`), except `except`, which is unioned across all levels.
+
+| Option | config | plugin | page |
+| --- | :---: | :---: | :---: |
+| `debounce` | ✓ | ✓ | ✓ |
+| `except` | ✓ | ✓ | ✓ |
+| `cache_ttl` | ✓ | ✓ | — |
+| `show_timestamp` | ✓ | ✓ | — |
+| `indicatorPosition` | — | ✓ | — |
+| `exceptPages` | — | ✓ | — |
 
 ### Debounce
 
@@ -172,6 +194,10 @@ class EditSensitive extends EditRecord
 ```
 
 ## Lifecycle hooks
+
+`beforeAutosave()` and `getAutosaveValidationRules()` apply to both Edit and
+Create/custom pages. `afterAutosave()` runs on **Edit pages only** — it receives
+the saved record, which Create pages don't have until submit.
 
 ```php
 protected function beforeAutosave(array $data): array

@@ -64,9 +64,23 @@ test('cacheKey is scoped by the active tenant', function () {
     };
     $tenant->setAttribute($tenant->getKeyName(), 7);
 
+    Filament::shouldReceive('getCurrentPanel')->andReturnNull();
     Filament::shouldReceive('getTenant')->andReturn($tenant);
 
     expect(AutosaveManager::cacheKey('App\\Some\\Page'))->toContain(':7:');
+});
+
+test('currentScope prefers the active panel guard user id over the default guard', function () {
+    $guard = Mockery::mock(\Illuminate\Contracts\Auth\Guard::class);
+    $guard->shouldReceive('id')->andReturn(42);
+
+    $panel = Mockery::mock(\Filament\Panel::class);
+    $panel->shouldReceive('auth')->andReturn($guard);
+
+    Filament::shouldReceive('getCurrentPanel')->andReturn($panel);
+    Filament::shouldReceive('getTenant')->andReturnNull();
+
+    expect(AutosaveManager::currentScope())->toBe('42');
 });
 
 test('cacheKey falls back to session id for guests', function () {

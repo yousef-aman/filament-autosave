@@ -40,10 +40,16 @@ class AutosaveManager
     /** Tenant + owner scope so drafts never leak across users or tenants. */
     public static function currentScope(): string
     {
-        $owner = auth()->id() ?? session()->getId();
+        $owner = self::resolveOwnerId() ?? session()->getId();
         $tenant = Filament::getTenant()?->getKey();
 
         return ($tenant !== null ? $tenant.':' : '').$owner;
+    }
+
+    /** Prefer the active panel's guard so custom-guard panels key by user, not session. */
+    private static function resolveOwnerId(): int|string|null
+    {
+        return Filament::getCurrentPanel()?->auth()?->id() ?? auth()->id();
     }
 
     /** @param  array<string, mixed>  $data */

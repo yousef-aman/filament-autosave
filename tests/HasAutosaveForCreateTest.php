@@ -153,12 +153,13 @@ test('restoreDraft fills the form and flips hasDraft', function () {
     expect($page->autosaveHasDraft)->toBeFalse();
 });
 
-test('restoreDraft does nothing when no draft exists', function () {
+test('restoreDraft dispatches idle when no draft exists so the indicator does not hang', function () {
     $page = makeCreatePage(['title' => 'Empty']);
 
     $page->restoreDraft();
 
-    expect($page->dispatched)->toBeEmpty();
+    expect($page->dispatched)->toHaveCount(1);
+    expect($page->dispatched[0]['params'])->toHaveKey('status', 'idle');
 });
 
 test('restoreDraft excludes reserved fields from cached data', function () {
@@ -243,6 +244,23 @@ test('stripFileUploads preserves scalars and non-upload objects', function () {
     expect($result)->toHaveKey('active', true);
     expect($result)->toHaveKey('tags');
     expect($result)->toHaveKey('at');
+});
+
+test('autosave clears an existing draft when every field is cleared', function () {
+    $page = makeCreatePage(['title' => 'Initial']);
+    $page->mountHasAutosaveForCreate();
+
+    $page->form->setState(['title' => 'Something']);
+    $page->autosave();
+
+    $key = AutosaveManager::cacheKey(get_class($page));
+    expect(Cache::get($key))->not->toBeNull();
+
+    // Clearing every field must not leave a stale draft behind for restore.
+    $page->form->setState(['title' => '']);
+    $page->autosave();
+
+    expect(Cache::get($key))->toBeNull();
 });
 
 test('autosave does not re-save unchanged data on subsequent ticks', function () {

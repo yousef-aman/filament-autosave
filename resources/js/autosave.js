@@ -6,11 +6,15 @@ export default function autosave({ debounce = 1500, mode = 'edit' }) {
         fadeTimer: null,
         previousData: null,
         mode: mode,
+        debounceMs: debounce,
 
         init() {
             if (this.$wire.autosaveEnabled === false) {
                 return
             }
+
+            // Page-level debounce (page > plugin > config) is resolved server-side.
+            this.debounceMs = Number(this.$wire.autosaveDebounceMs) || debounce
 
             this.previousData = JSON.stringify(this.$wire.data)
 
@@ -29,7 +33,7 @@ export default function autosave({ debounce = 1500, mode = 'edit' }) {
                 },
             )
 
-            this.$wire.$on('autosave-status', (params) => {
+            this._offStatus = this.$wire.$on('autosave-status', (params) => {
                 const data = Array.isArray(params) ? params[0] : params
                 this.setStatus(data.status, data.timestamp || null)
             })
@@ -38,7 +42,7 @@ export default function autosave({ debounce = 1500, mode = 'edit' }) {
                 const mine = this.$el?.closest?.('[wire\\:id]')
                 const submitted = e.target?.closest?.('[wire\\:id]')
 
-                if (!mine || !submitted || mine === submitted) {
+                if (mine && submitted && mine === submitted) {
                     this.cancelPending()
                 }
             }
@@ -59,7 +63,7 @@ export default function autosave({ debounce = 1500, mode = 'edit' }) {
 
             this.timer = setTimeout(() => {
                 this.save()
-            }, debounce)
+            }, this.debounceMs)
         },
 
         async save() {
@@ -83,6 +87,7 @@ export default function autosave({ debounce = 1500, mode = 'edit' }) {
 
             try {
                 await this.$wire.undoAutosave()
+                this.resolvePending()
             } catch (e) {
                 this.setStatus('error')
             }
@@ -95,8 +100,17 @@ export default function autosave({ debounce = 1500, mode = 'edit' }) {
 
             try {
                 await this.$wire.restoreDraft()
+                this.resolvePending()
             } catch (e) {
                 this.setStatus('error')
+            }
+        },
+
+        // Safety net: if the server round-trip dispatched no status event, don't
+        // leave the indicator stuck on "saving".
+        resolvePending() {
+            if (this.status === 'saving') {
+                this.status = 'idle'
             }
         },
 
@@ -134,6 +148,7 @@ export default function autosave({ debounce = 1500, mode = 'edit' }) {
             clearTimeout(this.timer)
             clearTimeout(this.fadeTimer)
             document.removeEventListener('submit', this._submitHandler)
+            this._offStatus?.()
         },
     }
 }

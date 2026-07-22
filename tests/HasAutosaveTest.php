@@ -1,6 +1,7 @@
 <?php
 
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 use YousefAman\FilamentAutosave\HasAutosave;
 
 beforeEach(function () {
@@ -145,6 +146,18 @@ test('getAutosaveExcept merges config and page lists', function () {
     expect($page->getAutosaveExcept())->toContain('token')->toContain('password');
 });
 
+test('mountHasAutosave exposes the resolved debounce for the indicator', function () {
+    config(['filament-autosave.debounce' => 1750]);
+
+    $page = makeEditPage(['name' => 'John']);
+    (fn () => $this->autosaveDebounce = 2600)->call($page);
+
+    $page->mountHasAutosave();
+
+    // Page-level override must reach the frontend, not just the plugin value.
+    expect($page->autosaveDebounceMs)->toBe(2600);
+});
+
 test('mountHasAutosave sets snapshot hash', function () {
     $page = makeEditPage(['name' => 'John']);
 
@@ -246,6 +259,17 @@ test('undoAutosave is a no-op when no snapshot exists', function () {
     expect($page->autosaveCanUndo)->toBeFalse();
 });
 
+test('undoAutosave dispatches idle when no snapshot exists so the indicator does not hang', function () {
+    $page = makeEditPage(['title' => 'Same'], ['title' => 'Same']);
+    $page->mountHasAutosave();
+
+    $page->undoAutosave();
+
+    expect($page->autosaveCanUndo)->toBeFalse();
+    expect($page->dispatched)->toHaveCount(1);
+    expect($page->dispatched[0]['params'])->toHaveKey('status', 'idle');
+});
+
 test('autosave dispatches error on exception', function () {
     $page = new class
     {
@@ -297,4 +321,156 @@ test('autosave dispatches error on exception', function () {
     $page->autosave();
 
     expect($page->dispatched[0]['params'])->toHaveKey('status', 'error');
+});
+
+test('undo snapshot captures only real record columns, not relationship-named fields', function () {
+    $page = new class
+    {
+        use HasAutosave;
+
+        public object $form;
+
+        public ?array $data = [];
+
+        public array $dispatched = [];
+
+        public array $updates = [];
+
+        public function __construct()
+        {
+            $this->form = new class
+            {
+                public array $state = ['title' => 'New', 'author' => 'x'];
+
+                public function getRawState(): array
+                {
+                    return $this->state;
+                }
+
+                public function fill(array $data): void
+                {
+                    $this->state = $data;
+                }
+            };
+        }
+
+        public function dispatch(string $event, ...$params): void
+        {
+            $this->dispatched[] = ['event' => $event, 'params' => $params];
+        }
+
+        public function authorizeAccess(): void {}
+
+        public function getRecord(): object
+        {
+            return new class
+            {
+                public function getAttributes(): array
+                {
+                    // 'author' is a relationship, not a stored column.
+                    return ['title' => 'Old'];
+                }
+
+                public function only(array $keys): array
+                {
+                    $all = ['title' => 'Old', 'author' => ['id' => 99]];
+
+                    return array_intersect_key($all, array_flip($keys));
+                }
+
+                public function getKey(): int
+                {
+                    return 1;
+                }
+
+                public function refresh(): static
+                {
+                    return $this;
+                }
+            };
+        }
+
+        public function handleRecordUpdate(object $record, array $data): object
+        {
+            $this->updates[] = $data;
+
+            return $record;
+        }
+    };
+
+    $page->autosave();
+    $page->undoAutosave();
+
+    // The undo write restores 'title' only — the relationship-named key never
+    // entered the snapshot.
+    expect($page->updates[1])->toBe(['title' => 'Old']);
+});
+
+test('a failed autosave logs the exception type but never the field values', function () {
+    Log::spy();
+
+    $page = new class
+    {
+        use HasAutosave;
+
+        public ?array $data = [];
+
+        public object $form;
+
+        public array $dispatched = [];
+
+        public function __construct()
+        {
+            $this->form = new class
+            {
+                public function getRawState(): array
+                {
+                    return ['title' => 'PII-LEAK-XYZ'];
+                }
+
+                public function fill(array $data): void {}
+            };
+        }
+
+        public function dispatch(string $event, ...$params): void
+        {
+            $this->dispatched[] = ['event' => $event, 'params' => $params];
+        }
+
+        public function authorizeAccess(): void {}
+
+        public function getRecord(): object
+        {
+            return new class
+            {
+                public function refresh(): static
+                {
+                    return $this;
+                }
+
+                public function only(array $keys): array
+                {
+                    return [];
+                }
+
+                public function getKey(): int
+                {
+                    return 1;
+                }
+            };
+        }
+
+        public function handleRecordUpdate(object $record, array $data): object
+        {
+            throw new RuntimeException('SQLSTATE[23000] value='.($data['title'] ?? ''));
+        }
+    };
+
+    $page->autosave();
+
+    expect($page->dispatched[0]['params'])->toHaveKey('status', 'error');
+
+    Log::shouldHaveReceived('warning')
+        ->withArgs(fn ($message, $context = []) => ! str_contains($message.json_encode($context), 'PII-LEAK-XYZ'))
+        ->once();
 });
