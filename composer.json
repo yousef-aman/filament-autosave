@@ -6,6 +6,7 @@
     "authors": [
         {
             "name": "Yousef Aman",
+            "email": "superyousef1999@gmail.com",
             "role": "Developer"
         }
     ],
@@ -35,7 +36,10 @@
             ]
         }
     },
-    "minimum-stability": "dev",
+    "scripts": {
+        "test": "vendor/bin/pest"
+    },
+    "minimum-stability": "stable",
     "prefer-stable": true,
     "config": {
         "allow-plugins": {

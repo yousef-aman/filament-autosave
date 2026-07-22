@@ -2,6 +2,8 @@
 
 namespace YousefAman\FilamentAutosave;
 
+use Filament\Resources\Events\RecordCreated;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Log;
 
 trait HasAutosaveForCreate
@@ -94,9 +96,23 @@ trait HasAutosaveForCreate
             return;
         }
 
+        // On "create & create another" Filament anonymises $this->record after
+        // a successful save, so getRecord() can no longer confirm the create.
+        // Listen for the RecordCreated event (dispatched before that cleanup)
+        // scoped to this page — it can't be shadowed by a page-level
+        // afterCreate() override the way a hook method could. The listener runs
+        // synchronously inside parent::create(), within this same request.
+        $created = false;
+
+        Event::listen(RecordCreated::class, function (...$payload) use (&$created): void {
+            if (in_array($this, $payload, true)) {
+                $created = true;
+            }
+        });
+
         parent::create($another);
 
-        if ($this->getRecord()?->exists) {
+        if ($created || $this->getRecord()?->exists) {
             $this->clearAutosaveDraft();
         }
     }

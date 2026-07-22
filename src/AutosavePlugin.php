@@ -14,8 +14,6 @@ class AutosavePlugin implements Plugin
 {
     use EvaluatesClosures;
 
-    protected bool|Closure $isGlobal = false;
-
     protected int|Closure|null $debounce = null;
 
     /** @var array<string> */
@@ -24,7 +22,7 @@ class AutosavePlugin implements Plugin
     /** @var array<class-string> */
     protected array $exceptPages = [];
 
-    protected bool|Closure $showTimestamp = true;
+    protected bool|Closure|null $showTimestamp = null;
 
     protected string $indicatorPosition = 'before';
 
@@ -55,13 +53,6 @@ class AutosavePlugin implements Plugin
         } catch (\Throwable) {
             return null;
         }
-    }
-
-    public function global(bool|Closure $condition = true): static
-    {
-        $this->isGlobal = $condition;
-
-        return $this;
     }
 
     public function debounce(int|Closure $milliseconds): static
@@ -108,11 +99,6 @@ class AutosavePlugin implements Plugin
         return $this;
     }
 
-    public function isGlobal(): bool
-    {
-        return $this->evaluate($this->isGlobal);
-    }
-
     public function getDebounce(): int
     {
         if ($this->debounce !== null) {
@@ -136,7 +122,11 @@ class AutosavePlugin implements Plugin
 
     public function shouldShowTimestamp(): bool
     {
-        return $this->evaluate($this->showTimestamp);
+        if ($this->showTimestamp !== null) {
+            return $this->evaluate($this->showTimestamp);
+        }
+
+        return (bool) config('filament-autosave.show_timestamp', true);
     }
 
     public function getIndicatorPosition(): string

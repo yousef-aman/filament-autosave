@@ -22,6 +22,24 @@ trait HasAutosave
         );
     }
 
+    /**
+     * Edit pages write the payload straight to the database, so persist the
+     * form's dehydrated state (casts, `dehydrateStateUsing()`, `dehydrated(false)`
+     * pruning) rather than the raw typed values.
+     *
+     * @return array<string, mixed>
+     */
+    protected function getAutosaveData(): array
+    {
+        $form = $this->resolveAutosaveForm();
+
+        if ($form === null) {
+            return $this->stripFileUploads($this->data ?? []);
+        }
+
+        return $this->stripFileUploads($this->dehydrateAutosaveState($form));
+    }
+
     public function autosave(): void
     {
         $this->performAutosave(function (array $data): bool {

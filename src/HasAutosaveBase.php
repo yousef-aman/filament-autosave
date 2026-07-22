@@ -2,6 +2,7 @@
 
 namespace YousefAman\FilamentAutosave;
 
+use Illuminate\Contracts\Support\Arrayable;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 use Livewire\Features\SupportFileUploads\TemporaryUploadedFile;
@@ -106,14 +107,104 @@ trait HasAutosaveBase
         return [];
     }
 
-    /** @return array<string, mixed> */
+    /**
+     * The autosave payload. Defaults to the form's *raw* state, which is what
+     * draft-based pages (Create/custom pages) want: the values the user typed,
+     * so that restoring a draft and re-filling the form round-trips cleanly.
+     * The Edit trait overrides this to persist *dehydrated* state instead,
+     * because that payload is written straight to the database.
+     *
+     * @return array<string, mixed>
+     */
     protected function getAutosaveData(): array
     {
         $form = $this->resolveAutosaveForm();
 
-        return $this->stripFileUploads(
-            $form !== null ? $form->getRawState() : ($this->data ?? [])
-        );
+        if ($form === null) {
+            return $this->stripFileUploads($this->data ?? []);
+        }
+
+        return $this->stripFileUploads($this->normalizeStateArray($form->getRawState()));
+    }
+
+    /**
+     * Produce the form's *dehydrated* state without running validation, so that
+     * autosave never persists raw, un-dehydrated values to the database. This
+     * mirrors Filament's own save pipeline: `dehydrateStateUsing()` transforms
+     * and casts are applied, `dehydrated(false)` fields (relationships, virtual
+     * fields) are pruned, and `mutateDehydratedStateUsing()` mutations run. It
+     * replicates `Schema::getStateSnapshot()` using only the public schema API,
+     * then keeps only declared top-level form fields. Non-schema form objects
+     * fall back to raw state.
+     *
+     * @return array<string, mixed>
+     */
+    protected function dehydrateAutosaveState(object $form): array
+    {
+        if (! method_exists($form, 'dehydrateState')) {
+            return $this->normalizeStateArray($form->getRawState());
+        }
+
+        $statePath = method_exists($form, 'getStatePath') ? $form->getStatePath() : null;
+        $raw = $this->normalizeStateArray($form->getRawState());
+
+        $state = [];
+
+        if (filled($statePath)) {
+            data_set($state, $statePath, $raw);
+        } else {
+            $state = $raw;
+        }
+
+        $form->dehydrateState($state);
+
+        if (method_exists($form, 'mutateDehydratedState')) {
+            $form->mutateDehydratedState($state);
+        }
+
+        $dehydrated = filled($statePath)
+            ? $this->normalizeStateArray(data_get($state, $statePath))
+            : $state;
+
+        return $this->pruneToDeclaredFields($form, $dehydrated);
+    }
+
+    /**
+     * Drop top-level keys that a client may have injected into the Livewire
+     * state but that don't belong to any declared form field. This guards the
+     * common mass-assignment vector (an extra top-level column such as
+     * `is_admin`); it intentionally does not descend into nested arrays, so a
+     * key injected inside a legitimate array field is left untouched — the
+     * model's own `$fillable`/`$guarded` remains the last line of defence.
+     *
+     * @param  array<string, mixed>  $state
+     * @return array<string, mixed>
+     */
+    protected function pruneToDeclaredFields(object $form, array $state): array
+    {
+        if (! method_exists($form, 'getFlatFields')) {
+            return $state;
+        }
+
+        $allowed = [];
+
+        foreach (array_keys($form->getFlatFields(withHidden: true)) as $key) {
+            $allowed[explode('.', (string) $key, 2)[0]] = true;
+        }
+
+        return array_intersect_key($state, $allowed);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    protected function normalizeStateArray(mixed $state): array
+    {
+        if ($state instanceof Arrayable) {
+            $state = $state->toArray();
+        }
+
+        return is_array($state) ? $state : [];
     }
 
     /** @param  array<string, mixed>  $draft */

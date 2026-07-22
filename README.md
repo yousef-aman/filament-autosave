@@ -1,9 +1,9 @@
 # Filament Autosave
 
-Google-Docs-style automatic saving for Filament v5. Works on Resource **Edit** pages, Resource **Create** pages, and custom Filament **Pages**. Ships with a visual status indicator (Unsaved → Saving → Saved) and one-step Undo on Edit pages.
+Automatic form saving for Filament v4 and v5 with a visual status indicator and one-step Undo on Edit pages.
 
-- **Edit pages** — changes are written straight to the database after a debounce.
-- **Create pages & custom pages** — unsubmitted changes are stored as a **draft** in Laravel Cache. When the user comes back, they get a banner to *Restore* or *Discard* the draft.
+- **Edit pages** — changes are written to the database after a debounce.
+- **Create and custom pages** — unsubmitted changes are stored as a draft in Laravel Cache. When the user returns, they can *Restore* or *Discard* the draft.
 
 ## Requirements
 
@@ -16,10 +16,7 @@ Google-Docs-style automatic saving for Filament v5. Works on Resource **Edit** p
 
 ```bash
 composer require yousefaman/filament-autosave
-php artisan filament:assets
 ```
-
-> Re-run `php artisan filament:assets` after every upgrade of this package — the Alpine component and CSS live under `public/js/yousefaman/filament-autosave` and need to be republished.
 
 Register the plugin in your panel provider:
 
@@ -30,6 +27,13 @@ public function panel(Panel $panel): Panel
 {
     return $panel->plugin(AutosavePlugin::make());
 }
+```
+
+The status indicator ships its own CSS/JS assets. If you copy Filament's assets
+into `public/` for production, re-run:
+
+```bash
+php artisan filament:assets
 ```
 
 Publish the config (optional):
@@ -46,7 +50,7 @@ php artisan vendor:publish --tag="filament-autosave-translations"
 
 ## Usage
 
-### Edit pages — save to DB
+### Edit pages
 
 ```php
 use Filament\Resources\Pages\EditRecord;
@@ -60,9 +64,16 @@ class EditArticle extends EditRecord
 }
 ```
 
-That's it. The form autosaves **1.5 s** after the last keystroke. When a save succeeds, an *Undo* button appears briefly so the user can revert that last write.
+The form autosaves 1.5 s after the last keystroke. After each save, an **Undo** button appears briefly to revert that write.
 
-### Create pages — draft to cache
+Autosave persists the form's **dehydrated** state — the same values Filament would
+write on a normal save (`dehydrateStateUsing()` transforms and casts applied,
+`dehydrated(false)` fields skipped) — but without running validation, so an
+incomplete form never blocks the save. Relationship fields (Repeater,
+`BelongsToMany`, etc.) are `dehydrated(false)` and are therefore **not** autosaved;
+they persist on explicit form submit.
+
+### Create pages
 
 ```php
 use Filament\Resources\Pages\CreateRecord;
@@ -76,11 +87,9 @@ class CreateArticle extends CreateRecord
 }
 ```
 
-No override of `mount()`, `create()`, or `afterCreate()` is needed — the trait wires itself up via Livewire's `mount{TraitName}` convention and cleans the draft after a successful `create()`.
+### Custom Filament pages
 
-### Custom Filament pages — draft to cache
-
-For pages without an Eloquent record (e.g., a `UserPreferences` dashboard):
+For pages without an Eloquent record:
 
 ```php
 use Filament\Pages\Page;
@@ -102,11 +111,11 @@ class UserPreferences extends Page
 }
 ```
 
-Call `$this->clearAutosaveDraft()` from your save handler to drop the draft once the user actually submits.
+Call `$this->clearAutosaveDraft()` from your save handler to drop the draft once the user submits.
 
 ## Configuration
 
-Every option can be set at three levels, merged in this order: **config → plugin → page** (the later wins, except `except` / `exceptPages` arrays which are unioned).
+Every option can be set at three levels, merged in this order: **config → plugin → page** (later wins, except `except` / `exceptPages` arrays which are unioned).
 
 ### Debounce
 
@@ -125,11 +134,13 @@ protected array $autosaveExcept = ['password', 'password_confirmation'];
 'except' => ['password'],
 ```
 
-### Exclude pages from global mode
+### Exclude specific pages
+
+Suppress the indicator on individual pages that use one of the traits (an
+alternative to setting `$autosaveEnabled = false` on the page itself):
 
 ```php
 AutosavePlugin::make()
-    ->global()
     ->exceptPages([EditPayment::class]);
 ```
 
@@ -144,8 +155,8 @@ AutosavePlugin::make()->cacheTtl(48);         // hours
 
 ```php
 AutosavePlugin::make()
-    ->showTimestamp(false)            // hide "Saved at 3:14 PM"
-    ->indicatorPosition('after');     // render after header actions instead of before
+    ->showTimestamp(false)
+    ->indicatorPosition('after');
 ```
 
 ### Per-page disable
@@ -164,7 +175,6 @@ class EditSensitive extends EditRecord
 ```php
 protected function beforeAutosave(array $data): array
 {
-    // Mutate data before it's written.
     return $data;
 }
 
@@ -193,38 +203,23 @@ After a successful autosave, the indicator shows an **Undo** button for 5 second
 3. Re-fills the form.
 4. Clears the undo snapshot.
 
-Undo values are round-tripped through JSON so JSON-cast columns are stored as arrays (not as encoded strings) and date columns survive the cache trip.
-
 ## Files and sensitive data
 
-The trait automatically drops `TemporaryUploadedFile` instances from the autosave payload (you can't cache an in-flight upload). Anything you put in `$autosaveExcept` is removed from both the autosave write *and* the draft restore, so secrets can't round-trip through the cache.
+`TemporaryUploadedFile` instances are automatically dropped from the autosave payload. Anything listed in `$autosaveExcept` is removed from both the autosave write and the draft restore. Client-submitted keys that don't map to a declared form field are also discarded, so autosave can only ever write real form fields.
+
+`$autosaveExcept` matches **top-level** field names only; it does not descend into
+nested keys (e.g. a secret inside a Repeater row). Keep sensitive values out of the
+form, or mark such fields `->dehydrated(false)` to exclude them from autosave.
 
 ## Translations
 
-The package ships with English strings under the `filament-autosave` namespace:
-
-```
-unsaved, saving, saved, saved_at, undo, undone, error, draft_available, restore, discard, restored
-```
-
-Publish with `--tag="filament-autosave-translations"` to customize.
-
-## How it works
-
-1. An Alpine.js component watches `$wire.data` for changes.
-2. After the debounce period, it calls the Livewire `autosave()` method.
-3. Server takes a snapshot hash of the current form state (order-independent xxh128).
-4. If the hash matches the last snapshot, the save is a no-op.
-5. For **Edit** pages, the changed fields are passed to `handleRecordUpdate()`; previous values are cached under a short TTL to power Undo.
-6. For **Create** pages, the filtered payload is stored in Laravel Cache under a user-scoped key (`filament-autosave:{user}:{page-class}`). On mount, if a draft exists, the Alpine component shows a **Restore / Discard** banner.
+Publish translations with `--tag="filament-autosave-translations"` to customize any of the indicator labels (`unsaved`, `saving`, `saved`, `saved_at`, `undo`, `undone`, `error`, `draft_available`, `restore`, `discard`, `restored`).
 
 ## Testing
 
 ```bash
 composer test
 ```
-
-The package ships with 41 Pest tests covering the save path, draft lifecycle, undo, hash collisions, and file-upload filtering.
 
 ## License
 
