@@ -2,8 +2,10 @@
 
 use Illuminate\Support\Facades\Cache;
 use YousefAman\FilamentAutosave\AutosaveManager;
+use YousefAman\FilamentAutosave\Tests\Fixtures\AutosaveCheckboxListEditFormComponent;
 use YousefAman\FilamentAutosave\Tests\Fixtures\AutosaveCreateFormComponent;
 use YousefAman\FilamentAutosave\Tests\Fixtures\AutosaveEditFormComponent;
+use YousefAman\FilamentAutosave\Tests\Fixtures\AutosaveMultiOptionCreateFormComponent;
 use YousefAman\FilamentAutosave\Tests\Fixtures\AutosaveSelectEditFormComponent;
 
 /**
@@ -81,6 +83,34 @@ test('edit autosave keeps a select value that is a valid option', function () {
     expect($component->written)->toHaveKey('role', 'editor');
 });
 
+test('edit autosave keeps a valid CheckboxList selection (array-valued option field)', function () {
+    $component = new AutosaveCheckboxListEditFormComponent;
+    $component->mountHasAutosave();
+
+    // A fully valid multi-selection must survive — the option rule is enforced
+    // per element, not against the whole array.
+    $component->data = ['title' => 'Hello', 'tags' => ['a', 'c']];
+
+    $component->autosave();
+
+    expect($component->written)->toHaveKey('tags', ['a', 'c']);
+    expect($component->written)->toHaveKey('title', 'Hello');
+});
+
+test('edit autosave drops a CheckboxList value containing an out-of-options element', function () {
+    $component = new AutosaveCheckboxListEditFormComponent;
+    $component->mountHasAutosave();
+
+    // 'zzz' is not an allowed option — the whole field is skipped, as a normal
+    // save would reject it.
+    $component->data = ['title' => 'Hello', 'tags' => ['a', 'zzz']];
+
+    $component->autosave();
+
+    expect($component->written)->not->toHaveKey('tags');
+    expect($component->written)->toHaveKey('title', 'Hello');
+});
+
 test('edit autosave drops client-injected keys that are not declared form fields', function () {
     $component = new AutosaveEditFormComponent;
     $component->mountHasAutosave();
@@ -108,4 +138,44 @@ test('create autosave stores the raw typed values so drafts restore cleanly', fu
 
     // Raw value preserved (NOT dehydrated to 'ABC') — restore must round-trip.
     expect($draft)->toBe(['title' => 'Hello', 'code' => 'abc']);
+});
+
+test('create autosave keeps valid CheckboxList, multiple ToggleButtons and multiple Select selections in the draft', function () {
+    $component = new AutosaveMultiOptionCreateFormComponent;
+    $component->mount();
+
+    $component->data = [
+        'title' => 'Hello',
+        'tags' => ['a', 'c'],
+        'perms' => ['r', 'w'],
+        'roles' => ['admin', 'editor'],
+    ];
+
+    $component->autosave();
+
+    $draft = Cache::get(AutosaveManager::cacheKey(AutosaveMultiOptionCreateFormComponent::class));
+
+    expect($draft)->toBe([
+        'title' => 'Hello',
+        'tags' => ['a', 'c'],
+        'perms' => ['r', 'w'],
+        'roles' => ['admin', 'editor'],
+    ]);
+});
+
+test('create autosave drops an out-of-options element from an array-valued option field', function () {
+    $component = new AutosaveMultiOptionCreateFormComponent;
+    $component->mount();
+
+    $component->data = [
+        'title' => 'Hello',
+        'tags' => ['a', 'nope'],
+    ];
+
+    $component->autosave();
+
+    $draft = Cache::get(AutosaveManager::cacheKey(AutosaveMultiOptionCreateFormComponent::class));
+
+    expect($draft)->toHaveKey('title', 'Hello');
+    expect($draft)->not->toHaveKey('tags');
 });

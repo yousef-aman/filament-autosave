@@ -8,8 +8,8 @@ Automatic form saving for Filament v4 and v5 with a visual status indicator and 
 ## Requirements
 
 - PHP 8.2+
-- Laravel 11 or 12
-- Filament v4 or v5
+- Filament v4 or v5 (and whichever Laravel version it requires — Laravel 11 for
+  Filament v4, Laravel 12 for v5)
 - Livewire v3 or v4
 
 ## Installation
@@ -75,9 +75,11 @@ The form autosaves 1.5 s after the last keystroke. After each save, an **Undo** 
 Autosave persists the form's **dehydrated** state — the same values Filament would
 write on a normal save (`dehydrateStateUsing()` transforms and casts applied,
 `dehydrated(false)` fields skipped) — but without running validation, so an
-incomplete form never blocks the save. Relationship fields (Repeater,
-`BelongsToMany`, etc.) are `dehydrated(false)` and are therefore **not** autosaved;
-they persist on explicit form submit.
+incomplete form never blocks the save. Relationship-backed fields — anything using
+`->relationship()`, a multiple `Select`, `BelongsToMany`, etc. — are
+`dehydrated(false)` and are therefore **not** autosaved; they persist on explicit
+form submit. A plain (non-relationship) `Repeater` or `CheckboxList` stores to its
+own column, so it *is* dehydrated and *is* autosaved.
 
 Because validation is skipped, field-level rules (`minLength`, `maxValue`,
 `in:`, etc.) are **not** enforced during autosave — only on explicit submit. A

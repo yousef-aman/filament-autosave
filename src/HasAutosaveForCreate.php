@@ -2,7 +2,6 @@
 
 namespace YousefAman\FilamentAutosave;
 
-use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Log;
 
 trait HasAutosaveForCreate
@@ -110,22 +109,21 @@ trait HasAutosaveForCreate
         parent::create($another);
 
         // "create another" nulls $this->record, so rely on the flag set in
-        // handleRecordCreation(); getRecord() covers the ordinary create.
+        // rememberData(); getRecord() covers the ordinary create.
         if ($this->autosaveRecordWasCreated || $this->getRecord()?->exists) {
             $this->clearAutosaveDraft();
         }
     }
 
-    /**
-     * Flags a successful create (Octane-safe; works on all Filament v4/v5).
-     *
-     * @param  array<string, mixed>  $data
-     */
-    protected function handleRecordCreation(array $data): Model
+    // Filament calls rememberData() only after a successful create; unlike
+    // handleRecordCreation, a page can't shadow it. create() resets the flag first.
+    protected function rememberData(): void
     {
         $this->autosaveRecordWasCreated = true;
 
-        return parent::handleRecordCreation($data);
+        if (method_exists(parent::class, 'rememberData')) {
+            parent::rememberData();
+        }
     }
 
     protected function getAutosaveCacheKey(): string

@@ -50,6 +50,21 @@ test('snapshotHash does not collide on escaped slashes', function () {
         ->not->toBe(AutosaveManager::snapshotHash(['value' => 'ab']));
 });
 
+test('snapshotHash does not collide distinct states that fail JSON encoding', function () {
+    // Invalid UTF-8 makes json_encode fail; two distinct un-encodable states
+    // must still hash differently, or a real change could be judged "unchanged"
+    // and silently skipped.
+    $a = AutosaveManager::snapshotHash(['value' => "\xB1\x31"]);
+    $b = AutosaveManager::snapshotHash(['value' => "\xC3\x28"]);
+
+    expect($a)->not->toBe($b);
+});
+
+test('snapshotHash still distinguishes an encodable state from an un-encodable one', function () {
+    expect(AutosaveManager::snapshotHash(['value' => 'ok']))
+        ->not->toBe(AutosaveManager::snapshotHash(['value' => "\xB1\x31"]));
+});
+
 test('cacheKey generates correct format for authenticated users', function () {
     $key = AutosaveManager::cacheKey('App\\Some\\Page');
     $expectedOwner = auth()->id() ?? session()->getId();

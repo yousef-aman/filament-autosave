@@ -16,10 +16,18 @@ class AutosaveManager
     {
         self::sortRecursive($data);
 
-        return hash('xxh128', json_encode(
-            $data,
-            JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES,
-        ));
+        try {
+            $encoded = json_encode(
+                $data,
+                JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES,
+            );
+        } catch (\JsonException) {
+            // Un-encodable state (invalid UTF-8, NAN/INF): fall back so distinct
+            // states don't collide on the empty-string hash.
+            $encoded = serialize($data);
+        }
+
+        return hash('xxh128', $encoded);
     }
 
     /**

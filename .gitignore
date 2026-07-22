@@ -1,4 +1,6 @@
 /vendor/
 /.idea/
+/.claude/
+/docs/
 composer.lock
 .phpunit.result.cache

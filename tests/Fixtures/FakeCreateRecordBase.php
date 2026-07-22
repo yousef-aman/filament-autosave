@@ -10,6 +10,10 @@ use Illuminate\Database\Eloquent\Model;
  *
  *  - on a successful create, handleRecordCreation() is called *before* any
  *    cleanup (exactly like Filament);
+ *  - rememberData() is called only on the success path (after the write,
+ *    before "create another" anonymises the record) — mirroring Filament, and
+ *    giving the trait a success signal that a page-level handleRecordCreation
+ *    override cannot shadow;
  *  - on "create & create another" the record is then anonymised
  *    ($this->record = null), so getRecord() can no longer confirm the create.
  */
@@ -28,10 +32,17 @@ class FakeCreateRecordBase
 
         $this->record = $this->handleRecordCreation(['title' => 'created']);
 
+        $this->rememberData();
+
         if ($another) {
             // Filament anonymises the record when creating another.
             $this->record = null;
         }
+    }
+
+    protected function rememberData(): void
+    {
+        //
     }
 
     /**

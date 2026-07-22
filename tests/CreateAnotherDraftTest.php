@@ -68,6 +68,60 @@ test('create keeps the draft when creation halts', function () {
     expect(pageDraft($page))->toBe(['title' => 'Draft']);
 });
 
+test('create keeps the draft when a halt follows a mount-time rememberData()', function () {
+    // Filament calls rememberData() at mount (for the unsaved-changes alert),
+    // which sets the "created" flag early; create() must reset it so a later
+    // halted create does not wrongly clear the draft.
+    $page = makeCreateRecordPage();
+    $page->shouldHalt = true;
+    seedDraft($page);
+
+    // Simulate the mount-time snapshot call.
+    (fn () => $this->rememberData())->call($page);
+
+    $page->create(another: true);
+
+    expect(pageDraft($page))->toBe(['title' => 'Draft']);
+});
+
+test('create clears the draft even when the page defines its own handleRecordCreation', function () {
+    // A page-level handleRecordCreation() shadows the trait's override, so draft
+    // clearing must not depend on it. rememberData() still fires on success.
+    $page = new class extends FakeCreateRecordBase
+    {
+        use HasAutosaveForCreate;
+
+        public ?array $data = [];
+
+        public bool $ownCreationRan = false;
+
+        public function dispatch(string $event, ...$params): void {}
+
+        protected function handleRecordCreation(array $data): \Illuminate\Database\Eloquent\Model
+        {
+            $this->ownCreationRan = true;
+
+            $record = new class extends \Illuminate\Database\Eloquent\Model
+            {
+                protected $guarded = [];
+            };
+
+            $record->exists = true;
+            $record->setAttribute($record->getKeyName(), 1);
+
+            return $record;
+        }
+    };
+
+    seedDraft($page);
+
+    $page->create(another: true);
+
+    expect($page->ownCreationRan)->toBeTrue();
+    expect(pageDraft($page))->toBeNull();
+    expect($page->autosaveHasDraft)->toBeFalse();
+});
+
 test('create clears the draft even when the page defines its own afterCreate', function () {
     // A page-level afterCreate() shadows any trait hook of the same name, so
     // draft clearing must not depend on it. The RecordCreated event still fires.

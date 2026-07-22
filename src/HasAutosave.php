@@ -54,7 +54,11 @@ trait HasAutosave
             }
 
             $this->autosaveCanUndo = $this->storeUndoSnapshot(array_keys($data));
-            $this->handleRecordUpdate($this->getRecord(), $data);
+
+            $this->autosaveWithinTransaction(
+                fn () => $this->handleRecordUpdate($this->getRecord(), $data)
+            );
+
             $this->getRecord()->refresh();
 
             $this->afterAutosave($this->getRecord());
@@ -79,7 +83,10 @@ trait HasAutosave
                 return;
             }
 
-            $this->handleRecordUpdate($this->getRecord(), $snapshot);
+            $this->autosaveWithinTransaction(
+                fn () => $this->handleRecordUpdate($this->getRecord(), $snapshot)
+            );
+
             $this->getRecord()->refresh();
 
             method_exists($this, 'fillForm')
@@ -172,6 +179,30 @@ trait HasAutosave
     protected function afterAutosave(object $record): void
     {
         //
+    }
+
+    // Wrap the write in a transaction like Filament's save() so a mid-write
+    // failure rolls back; direct write when the page lacks the helpers.
+    protected function autosaveWithinTransaction(callable $write): void
+    {
+        if (! method_exists($this, 'beginDatabaseTransaction')
+            || ! method_exists($this, 'commitDatabaseTransaction')
+            || ! method_exists($this, 'rollBackDatabaseTransaction')
+        ) {
+            $write();
+
+            return;
+        }
+
+        try {
+            $this->beginDatabaseTransaction();
+            $write();
+            $this->commitDatabaseTransaction();
+        } catch (\Throwable $e) {
+            $this->rollBackDatabaseTransaction();
+
+            throw $e;
+        }
     }
 
     /**

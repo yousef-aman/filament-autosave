@@ -256,7 +256,15 @@ trait HasAutosaveBase
                 continue;
             }
 
-            if (Validator::make([$name => $data[$name]], [$name => [$rule]])->fails()) {
+            $value = $data[$name];
+
+            // Array fields (CheckboxList, multiple Select) validate per element;
+            // the flat rule against the whole array would reject valid selections.
+            $rules = is_array($value)
+                ? [$name => ['array'], "{$name}.*" => [$rule]]
+                : [$name => [$rule]];
+
+            if (Validator::make([$name => $value], $rules)->fails()) {
                 unset($data[$name]);
             }
         }
