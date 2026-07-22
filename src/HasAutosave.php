@@ -45,6 +45,8 @@ trait HasAutosave
                 $data = $this->mutateFormDataBeforeSave($data);
             }
 
+            $data = $this->dropBlankRequiredAutosaveFields($data);
+
             if (empty($data)) {
                 return false;
             }
@@ -156,5 +158,36 @@ trait HasAutosave
     protected function afterAutosave(object $record): void
     {
         //
+    }
+
+    /**
+     * Never write a blank value to a required field — it would violate a NOT NULL
+     * column and fail the whole save. Autosave keeps the last valid value until
+     * the user fills the field and submits.
+     *
+     * @param  array<string, mixed>  $data
+     * @return array<string, mixed>
+     */
+    protected function dropBlankRequiredAutosaveFields(array $data): array
+    {
+        $form = $this->resolveAutosaveForm();
+
+        if ($form === null || ! method_exists($form, 'getFlatFields')) {
+            return $data;
+        }
+
+        foreach ($form->getFlatFields(withHidden: true) as $key => $field) {
+            $name = explode('.', (string) $key, 2)[0];
+
+            if (array_key_exists($name, $data)
+                && blank($data[$name])
+                && method_exists($field, 'isRequired')
+                && $field->isRequired()
+            ) {
+                unset($data[$name]);
+            }
+        }
+
+        return $data;
     }
 }

@@ -39,6 +39,8 @@ class AutosaveEditFormComponent extends Component implements HasSchemas
                     ->dehydrateStateUsing(fn ($state) => strtoupper((string) $state)),
                 TextInput::make('secret')
                     ->dehydrated(false),
+                TextInput::make('slug')
+                    ->required(),
             ])
             ->statePath('data');
     }

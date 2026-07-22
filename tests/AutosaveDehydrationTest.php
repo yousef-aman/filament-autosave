@@ -43,6 +43,19 @@ test('edit autosave never writes dehydrated(false) fields to the record', functi
     expect($component->written)->toHaveKey('title', 'Hello');
 });
 
+test('edit autosave skips a required field that was left blank', function () {
+    $component = new AutosaveEditFormComponent;
+    $component->mountHasAutosave();
+
+    // slug is required; clearing it must not write null to the NOT NULL column.
+    $component->data = ['title' => 'Hello', 'slug' => ''];
+
+    $component->autosave();
+
+    expect($component->written)->not->toHaveKey('slug');
+    expect($component->written)->toHaveKey('title', 'Hello');
+});
+
 test('edit autosave drops client-injected keys that are not declared form fields', function () {
     $component = new AutosaveEditFormComponent;
     $component->mountHasAutosave();
