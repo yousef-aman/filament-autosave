@@ -2,21 +2,20 @@
 
 namespace YousefAman\FilamentAutosave\Tests\Fixtures;
 
-use Filament\Resources\Events\RecordCreated;
-use Illuminate\Support\Facades\Event;
+use Illuminate\Database\Eloquent\Model;
 
 /**
  * Minimal stand-in for Filament's CreateRecord that reproduces the behaviour the
  * autosave trait's create() override relies on:
  *
- *  - on a successful create the RecordCreated event is dispatched (as a string
- *    event + payload, exactly like Filament) *before* any cleanup;
+ *  - on a successful create, handleRecordCreation() is called *before* any
+ *    cleanup (exactly like Filament);
  *  - on "create & create another" the record is then anonymised
  *    ($this->record = null), so getRecord() can no longer confirm the create.
  */
 class FakeCreateRecordBase
 {
-    public ?object $record = null;
+    public ?Model $record = null;
 
     /** Toggle to simulate a validation/authorization Halt (no record created). */
     public bool $shouldHalt = false;
@@ -27,21 +26,7 @@ class FakeCreateRecordBase
             return;
         }
 
-        $this->record = new class
-        {
-            public bool $exists = true;
-
-            public function getKey(): int
-            {
-                return 1;
-            }
-        };
-
-        Event::dispatch(RecordCreated::class, [
-            'record' => $this->record,
-            'data' => [],
-            'page' => $this,
-        ]);
+        $this->record = $this->handleRecordCreation(['title' => 'created']);
 
         if ($another) {
             // Filament anonymises the record when creating another.
@@ -49,7 +34,23 @@ class FakeCreateRecordBase
         }
     }
 
-    public function getRecord(): ?object
+    /**
+     * @param  array<string, mixed>  $data
+     */
+    protected function handleRecordCreation(array $data): Model
+    {
+        $record = new class extends Model
+        {
+            protected $guarded = [];
+        };
+
+        $record->exists = true;
+        $record->setAttribute($record->getKeyName(), 1);
+
+        return $record;
+    }
+
+    public function getRecord(): ?Model
     {
         return $this->record;
     }

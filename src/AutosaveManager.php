@@ -2,6 +2,7 @@
 
 namespace YousefAman\FilamentAutosave;
 
+use Filament\Facades\Filament;
 use Illuminate\Support\Facades\Cache;
 
 class AutosaveManager
@@ -33,9 +34,16 @@ class AutosaveManager
 
     public static function cacheKey(string $pageClass): string
     {
-        $owner = auth()->id() ?? session()->getId();
+        return 'filament-autosave:'.self::currentScope().':'.$pageClass;
+    }
 
-        return 'filament-autosave:'.$owner.':'.$pageClass;
+    /** Tenant + owner scope so drafts never leak across users or tenants. */
+    public static function currentScope(): string
+    {
+        $owner = auth()->id() ?? session()->getId();
+        $tenant = Filament::getTenant()?->getKey();
+
+        return ($tenant !== null ? $tenant.':' : '').$owner;
     }
 
     /** @param  array<string, mixed>  $data */

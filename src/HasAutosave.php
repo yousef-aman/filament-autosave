@@ -23,9 +23,7 @@ trait HasAutosave
     }
 
     /**
-     * Edit pages write the payload straight to the database, so persist the
-     * form's dehydrated state (casts, `dehydrateStateUsing()`, `dehydrated(false)`
-     * pruning) rather than the raw typed values.
+     * Edit pages write to the database, so persist dehydrated state.
      *
      * @return array<string, mixed>
      */
@@ -51,10 +49,9 @@ trait HasAutosave
                 return false;
             }
 
-            $this->storeUndoSnapshot(array_keys($data));
+            $this->autosaveCanUndo = $this->storeUndoSnapshot(array_keys($data));
             $this->handleRecordUpdate($this->getRecord(), $data);
             $this->getRecord()->refresh();
-            $this->autosaveCanUndo = true;
 
             $this->afterAutosave($this->getRecord());
 
@@ -99,19 +96,22 @@ trait HasAutosave
         }
     }
 
-    /** @param  array<string>  $fieldKeys */
-    protected function storeUndoSnapshot(array $fieldKeys): void
+    /**
+     * @param  array<string>  $fieldKeys
+     * @return bool whether a snapshot was stored (i.e. undo is possible)
+     */
+    protected function storeUndoSnapshot(array $fieldKeys): bool
     {
         $record = $this->getRecord();
 
         if (! $record || empty($fieldKeys)) {
-            return;
+            return false;
         }
 
         $previous = $this->normalizeUndoSnapshot($record->only($fieldKeys));
 
         if (empty($previous)) {
-            return;
+            return false;
         }
 
         Cache::put(
@@ -119,6 +119,8 @@ trait HasAutosave
             $previous,
             now()->addMinutes($this->getUndoTtlMinutes()),
         );
+
+        return true;
     }
 
     /**
@@ -141,11 +143,9 @@ trait HasAutosave
 
     protected function getUndoCacheKey(): string
     {
-        $owner = auth()->id() ?? session()->getId();
-        $record = $this->getRecord();
-        $recordKey = $record?->getKey() ?? 'default';
+        $recordKey = $this->getRecord()?->getKey() ?? 'default';
 
-        return 'filament-autosave:undo:'.$owner.':'.static::class.':'.$recordKey;
+        return 'filament-autosave:undo:'.AutosaveManager::currentScope().':'.static::class.':'.$recordKey;
     }
 
     protected function getUndoTtlMinutes(): int

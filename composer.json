@@ -1,8 +1,13 @@
 {
     "name": "yousefaman/filament-autosave",
-    "description": "Automatic saving for Filament Edit Pages with visual status indicator",
+    "description": "Automatic form saving for Filament with a visual status indicator, undo, and drafts",
     "keywords": ["filament", "autosave", "laravel", "forms", "livewire"],
     "license": "MIT",
+    "homepage": "https://github.com/yousef-aman/filament-autosave",
+    "support": {
+        "issues": "https://github.com/yousef-aman/filament-autosave/issues",
+        "source": "https://github.com/yousef-aman/filament-autosave"
+    },
     "authors": [
         {
             "name": "Yousef Aman",

@@ -1,5 +1,6 @@
 <?php
 
+use Filament\Facades\Filament;
 use Illuminate\Support\Facades\Cache;
 use YousefAman\FilamentAutosave\AutosaveManager;
 
@@ -54,6 +55,18 @@ test('cacheKey generates correct format for authenticated users', function () {
     $expectedOwner = auth()->id() ?? session()->getId();
 
     expect($key)->toBe('filament-autosave:'.$expectedOwner.':App\\Some\\Page');
+});
+
+test('cacheKey is scoped by the active tenant', function () {
+    $tenant = new class extends Illuminate\Database\Eloquent\Model
+    {
+        protected $guarded = [];
+    };
+    $tenant->setAttribute($tenant->getKeyName(), 7);
+
+    Filament::shouldReceive('getTenant')->andReturn($tenant);
+
+    expect(AutosaveManager::cacheKey('App\\Some\\Page'))->toContain(':7:');
 });
 
 test('cacheKey falls back to session id for guests', function () {

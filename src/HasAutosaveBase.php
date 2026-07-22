@@ -108,11 +108,8 @@ trait HasAutosaveBase
     }
 
     /**
-     * The autosave payload. Defaults to the form's *raw* state, which is what
-     * draft-based pages (Create/custom pages) want: the values the user typed,
-     * so that restoring a draft and re-filling the form round-trips cleanly.
-     * The Edit trait overrides this to persist *dehydrated* state instead,
-     * because that payload is written straight to the database.
+     * Raw form state (what the user typed). The Edit trait overrides this to
+     * persist dehydrated state instead.
      *
      * @return array<string, mixed>
      */
@@ -128,14 +125,8 @@ trait HasAutosaveBase
     }
 
     /**
-     * Produce the form's *dehydrated* state without running validation, so that
-     * autosave never persists raw, un-dehydrated values to the database. This
-     * mirrors Filament's own save pipeline: `dehydrateStateUsing()` transforms
-     * and casts are applied, `dehydrated(false)` fields (relationships, virtual
-     * fields) are pruned, and `mutateDehydratedStateUsing()` mutations run. It
-     * replicates `Schema::getStateSnapshot()` using only the public schema API,
-     * then keeps only declared top-level form fields. Non-schema form objects
-     * fall back to raw state.
+     * Dehydrated form state without validation: mirrors Schema::getStateSnapshot,
+     * applying casts/dehydrateStateUsing and dropping dehydrated(false) fields.
      *
      * @return array<string, mixed>
      */
@@ -170,12 +161,8 @@ trait HasAutosaveBase
     }
 
     /**
-     * Drop top-level keys that a client may have injected into the Livewire
-     * state but that don't belong to any declared form field. This guards the
-     * common mass-assignment vector (an extra top-level column such as
-     * `is_admin`); it intentionally does not descend into nested arrays, so a
-     * key injected inside a legitimate array field is left untouched — the
-     * model's own `$fillable`/`$guarded` remains the last line of defence.
+     * Drop top-level keys not backed by a declared field (guards mass-assignment
+     * of injected columns). Nested keys rely on the model's $fillable/$guarded.
      *
      * @param  array<string, mixed>  $state
      * @return array<string, mixed>
@@ -255,37 +242,26 @@ trait HasAutosaveBase
     }
 
     /**
+     * Recursively drop TemporaryUploadedFile leaves, keeping their siblings.
+     *
      * @param  array<string, mixed>  $data
      * @return array<string, mixed>
      */
     protected function stripFileUploads(array $data): array
     {
         foreach ($data as $key => $value) {
-            if ($this->containsFileUpload($value)) {
+            if ($value instanceof TemporaryUploadedFile) {
                 unset($data[$key]);
+
+                continue;
+            }
+
+            if (is_array($value)) {
+                $data[$key] = $this->stripFileUploads($value);
             }
         }
 
         return $data;
-    }
-
-    protected function containsFileUpload(mixed $value): bool
-    {
-        if ($value instanceof TemporaryUploadedFile) {
-            return true;
-        }
-
-        if (! is_array($value)) {
-            return false;
-        }
-
-        foreach ($value as $nested) {
-            if ($this->containsFileUpload($nested)) {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     protected function resolveAutosaveForm(): ?object

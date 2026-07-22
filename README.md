@@ -89,7 +89,8 @@ class CreateArticle extends CreateRecord
 
 ### Custom Filament pages
 
-For pages without an Eloquent record:
+For pages without an Eloquent record. The form must use the default `data`
+state path (`->statePath('data')`), which is what the status indicator watches:
 
 ```php
 use Filament\Pages\Page;

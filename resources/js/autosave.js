@@ -34,7 +34,14 @@ export default function autosave({ debounce = 1500, mode = 'edit' }) {
                 this.setStatus(data.status, data.timestamp || null)
             })
 
-            this._submitHandler = () => this.cancelPending()
+            this._submitHandler = (e) => {
+                const mine = this.$el?.closest?.('[wire\\:id]')
+                const submitted = e.target?.closest?.('[wire\\:id]')
+
+                if (!mine || !submitted || mine === submitted) {
+                    this.cancelPending()
+                }
+            }
             document.addEventListener('submit', this._submitHandler)
         },
 
@@ -45,10 +52,6 @@ export default function autosave({ debounce = 1500, mode = 'edit' }) {
         },
 
         onDataChanged() {
-            if (this.status === 'draft_available') {
-                return
-            }
-
             clearTimeout(this.timer)
             clearTimeout(this.fadeTimer)
 

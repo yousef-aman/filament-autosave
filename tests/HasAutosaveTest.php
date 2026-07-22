@@ -210,6 +210,17 @@ test('autosave records an undo snapshot of previous DB values', function () {
     expect($page->autosaveCanUndo)->toBeTrue();
 });
 
+test('autosave does not offer undo when no previous values were captured', function () {
+    $page = makeEditPage(['title' => 'Original']); // no dbState -> record->only() is empty
+    $page->mountHasAutosave();
+
+    $page->form->setState(['title' => 'Updated']);
+    $page->autosave();
+
+    expect($page->updates)->toHaveCount(1);
+    expect($page->autosaveCanUndo)->toBeFalse();
+});
+
 test('undoAutosave restores previous field values and clears snapshot', function () {
     $page = makeEditPage(['title' => 'Original'], ['title' => 'Original']);
     $page->mountHasAutosave();

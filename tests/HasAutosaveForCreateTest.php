@@ -184,18 +184,45 @@ test('discardDraft clears cache and flips hasDraft', function () {
     expect($page->autosaveHasDraft)->toBeFalse();
 });
 
-test('stripFileUploads drops arrays containing file uploads', function () {
+test('stripFileUploads removes upload instances but keeps their siblings', function () {
     $page = makeCreatePage();
 
     $upload = Mockery::mock(TemporaryUploadedFile::class);
 
     $result = (fn (array $d) => $this->stripFileUploads($d))->call($page, [
         'title' => 'Hello',
+        'avatar' => $upload,
         'attachments' => [$upload],
         'count' => 5,
     ]);
 
-    expect($result)->toBe(['title' => 'Hello', 'count' => 5]);
+    // The scalar upload key is dropped; a pure-upload list collapses to [];
+    // unrelated fields are untouched.
+    expect($result)->toBe(['title' => 'Hello', 'attachments' => [], 'count' => 5]);
+});
+
+test('stripFileUploads keeps sibling fields inside a repeater row that has an upload', function () {
+    $page = makeCreatePage();
+
+    $upload = Mockery::mock(TemporaryUploadedFile::class);
+
+    $result = (fn (array $d) => $this->stripFileUploads($d))->call($page, [
+        'title' => 'Post',
+        'items' => [
+            ['name' => 'a', 'photo' => $upload],
+            ['name' => 'b'],
+        ],
+    ]);
+
+    // Only the nested upload is removed — the whole 'items' container and its
+    // sibling fields must survive.
+    expect($result)->toBe([
+        'title' => 'Post',
+        'items' => [
+            ['name' => 'a'],
+            ['name' => 'b'],
+        ],
+    ]);
 });
 
 test('stripFileUploads preserves scalars and non-upload objects', function () {

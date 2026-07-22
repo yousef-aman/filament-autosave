@@ -7,10 +7,9 @@
 <div
     x-load
     x-load-src="{{ \Filament\Support\Facades\FilamentAsset::getAlpineComponentSrc('autosave', 'yousefaman/filament-autosave') }}"
-    x-data="autosave({ debounce: {{ $debounce }}, mode: '{{ $mode }}' })"
+    x-data="autosave({ debounce: {{ $debounce }}, mode: @js($mode) })"
     x-show="status !== 'idle'"
-    x-transition:enter="fi-autosave-enter"
-    x-transition:leave="fi-autosave-leave"
+    x-transition.opacity.duration.150ms
     class="fi-autosave-indicator"
     x-cloak
 >
@@ -62,7 +61,7 @@
                 class="fi-autosave-icon"
             />
             @if($showTimestamp)
-                <span x-text="'{{ __('filament-autosave::autosave.saved_at') }} ' + timestamp"></span>
+                <span x-text="@js(__('filament-autosave::autosave.saved_at') . ' ') + timestamp"></span>
             @else
                 <span>{{ __('filament-autosave::autosave.saved') }}</span>
             @endif

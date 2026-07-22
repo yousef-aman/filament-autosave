@@ -2,8 +2,7 @@
 
 namespace YousefAman\FilamentAutosave;
 
-use Filament\Resources\Events\RecordCreated;
-use Illuminate\Support\Facades\Event;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Log;
 
 trait HasAutosaveForCreate
@@ -11,6 +10,8 @@ trait HasAutosaveForCreate
     use HasAutosaveBase;
 
     public bool $autosaveHasDraft = false;
+
+    protected bool $autosaveRecordWasCreated = false;
 
     public function mountHasAutosaveForCreate(): void
     {
@@ -96,25 +97,27 @@ trait HasAutosaveForCreate
             return;
         }
 
-        // On "create & create another" Filament anonymises $this->record after
-        // a successful save, so getRecord() can no longer confirm the create.
-        // Listen for the RecordCreated event (dispatched before that cleanup)
-        // scoped to this page — it can't be shadowed by a page-level
-        // afterCreate() override the way a hook method could. The listener runs
-        // synchronously inside parent::create(), within this same request.
-        $created = false;
-
-        Event::listen(RecordCreated::class, function (...$payload) use (&$created): void {
-            if (in_array($this, $payload, true)) {
-                $created = true;
-            }
-        });
+        $this->autosaveRecordWasCreated = false;
 
         parent::create($another);
 
-        if ($created || $this->getRecord()?->exists) {
+        // "create another" nulls $this->record, so rely on the flag set in
+        // handleRecordCreation(); getRecord() covers the ordinary create.
+        if ($this->autosaveRecordWasCreated || $this->getRecord()?->exists) {
             $this->clearAutosaveDraft();
         }
+    }
+
+    /**
+     * Flags a successful create (Octane-safe; works on all Filament v4/v5).
+     *
+     * @param  array<string, mixed>  $data
+     */
+    protected function handleRecordCreation(array $data): Model
+    {
+        $this->autosaveRecordWasCreated = true;
+
+        return parent::handleRecordCreation($data);
     }
 
     protected function getAutosaveCacheKey(): string
