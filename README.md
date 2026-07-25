@@ -8,9 +8,9 @@ Automatic form saving for Filament v4 and v5 with a visual status indicator and 
 ## Requirements
 
 - PHP 8.2+
-- Filament v4 or v5 (and whichever Laravel version it requires — Laravel 11 for
-  Filament v4, Laravel 12 for v5)
-- Livewire v3 or v4
+- Filament v4 or v5
+- Laravel 11, 12 or 13
+- Livewire v3 (with Filament v4) or v4 (with Filament v5)
 
 ## Installation
 
@@ -142,11 +142,23 @@ Each option supports the levels listed below, merged so the **later** wins
 | `indicatorPosition` | — | ✓ | — |
 | `exceptPages` | — | ✓ | — |
 
+> Page-level options are **methods**. Do not redeclare a property the trait
+> already defines (`$autosaveEnabled`, `$autosaveSnapshotHash`,
+> `$autosaveDebounceMs`, `$autosaveCanUndo`, `$autosaveHasDraft`): PHP treats a
+> redeclaration with a different default as an incompatible trait composition and
+> raises a fatal error.
+
 ### Debounce
 
 ```php
-AutosavePlugin::make()->debounce(2000);      // plugin-wide
-protected int $autosaveDebounce = 2000;       // per-page
+AutosavePlugin::make()->debounce(2000);       // plugin-wide
+
+// per-page
+protected function autosaveDebounce(): ?int
+{
+    return 2000;
+}
+
 // config/filament-autosave.php
 'debounce' => 1500,
 ```
@@ -154,15 +166,22 @@ protected int $autosaveDebounce = 2000;       // per-page
 ### Exclude fields
 
 ```php
-AutosavePlugin::make()->except(['password']);
-protected array $autosaveExcept = ['password', 'password_confirmation'];
-'except' => ['password'],
+AutosavePlugin::make()->except(['internal_notes']);
+
+// per-page — unioned with the plugin and config lists
+protected function autosaveExcept(): array
+{
+    return ['internal_notes'];
+}
+
+// config/filament-autosave.php
+'except' => ['password', 'password_confirmation'],
 ```
 
 ### Exclude specific pages
 
 Suppress the indicator on individual pages that use one of the traits (an
-alternative to setting `$autosaveEnabled = false` on the page itself):
+alternative to `shouldAutosave()` on the page itself):
 
 ```php
 AutosavePlugin::make()
@@ -191,9 +210,15 @@ class EditSensitive extends EditRecord
 {
     use HasAutosave;
 
-    public bool $autosaveEnabled = false;
+    protected function shouldAutosave(): bool
+    {
+        return false;
+    }
 }
 ```
+
+`shouldAutosave()` is authoritative on the server, so a disabled page cannot be
+switched back on from the browser.
 
 ## Lifecycle hooks
 
@@ -223,6 +248,13 @@ protected function getAutosaveValidationRules(): array
 
 `getAutosaveValidationRules()` is checked *per changed field only* — invalid fields are silently skipped so autosave never blocks the user. Full form validation still runs at submit time.
 
+Autosave runs `mutateFormDataBeforeSave()` and writes inside a database
+transaction, matching Filament's `save()`. It deliberately does **not** fire
+Filament's `beforeSave`/`afterSave` hooks or the `RecordUpdated`/`RecordSaved`
+events — use `afterAutosave()` for work that should run on every autosave. It does
+re-baseline Filament's unsaved-changes tracking, so a panel using
+`->unsavedChangesAlerts()` won't warn about changes autosave already wrote.
+
 ## Undo (Edit pages)
 
 After a successful autosave, the indicator shows an **Undo** button for 5 seconds. Clicking it:
@@ -234,11 +266,24 @@ After a successful autosave, the indicator shows an **Undo** button for 5 second
 
 ## Files and sensitive data
 
-`TemporaryUploadedFile` instances are automatically dropped from the autosave payload. Anything listed in `$autosaveExcept` is removed from both the autosave write and the draft restore. Client-submitted keys that don't map to a declared form field are also discarded, so autosave can only ever write real form fields.
+Dropped from every autosave payload automatically:
 
-`$autosaveExcept` matches **top-level** field names only; it does not descend into
-nested keys (e.g. a secret inside a Repeater row). Keep sensitive values out of the
-form, or mark such fields `->dehydrated(false)` to exclude them from autosave.
+- `TemporaryUploadedFile` instances (pending file uploads).
+- Any `TextInput` marked `->password()`. On an Edit page autosave would otherwise
+  commit a half-typed secret; on a Create page it would sit in the draft cache in
+  plain text.
+- The `except` list (config + plugin + page), applied to both the autosave write
+  and the draft restore.
+- Client-submitted keys that don't map to a declared form field, so autosave can
+  only ever write real form fields.
+
+`except` matches **top-level** field names only; it does not descend into nested
+keys (e.g. a secret inside a Repeater row).
+
+`->dehydrated(false)` keeps a field out of **Edit-page writes**, but *not* out of
+Create-page drafts — those are built from raw form state precisely so the user
+gets back exactly what they typed. For a secret on a Create page, use `except` (or
+`->password()`, which is handled for you).
 
 ## Translations
 

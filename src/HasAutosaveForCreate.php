@@ -3,18 +3,20 @@
 namespace YousefAman\FilamentAutosave;
 
 use Illuminate\Support\Facades\Log;
+use Livewire\Attributes\Locked;
 
 trait HasAutosaveForCreate
 {
     use HasAutosaveBase;
 
+    #[Locked]
     public bool $autosaveHasDraft = false;
 
     protected bool $autosaveRecordWasCreated = false;
 
     public function mountHasAutosaveForCreate(): void
     {
-        if (! $this->autosaveEnabled) {
+        if (! $this->initializeAutosaveState()) {
             return;
         }
 
@@ -36,8 +38,7 @@ trait HasAutosaveForCreate
             );
 
             if (empty($payload)) {
-                // Every field was cleared — drop any stale draft so it is not
-                // offered for restore later.
+                // Everything was cleared: drop the stale draft.
                 $this->clearAutosaveDraft();
 
                 return false;
@@ -68,9 +69,7 @@ trait HasAutosaveForCreate
                 return;
             }
 
-            $this->fillAutosaveData(
-                AutosaveManager::excludeFields($this->stripFileUploads($draft), $this->getAutosaveExcept())
-            );
+            $this->fillAutosaveData($this->prepareAutosavePayload($draft));
 
             $this->autosaveSnapshotHash = AutosaveManager::snapshotHash(
                 $this->prepareAutosavePayload($this->getAutosaveData())
@@ -108,15 +107,13 @@ trait HasAutosaveForCreate
 
         parent::create($another);
 
-        // "create another" nulls $this->record, so rely on the flag set in
-        // rememberData(); getRecord() covers the ordinary create.
+        // "create another" nulls $this->record, hence the rememberData() flag.
         if ($this->autosaveRecordWasCreated || $this->getRecord()?->exists) {
             $this->clearAutosaveDraft();
         }
     }
 
-    // Filament calls rememberData() only after a successful create; unlike
-    // handleRecordCreation, a page can't shadow it. create() resets the flag first.
+    // Filament calls this only after a successful create, and a page can't shadow it.
     protected function rememberData(): void
     {
         $this->autosaveRecordWasCreated = true;

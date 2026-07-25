@@ -4,16 +4,18 @@ namespace YousefAman\FilamentAutosave;
 
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
+use Livewire\Attributes\Locked;
 
 trait HasAutosave
 {
     use HasAutosaveBase;
 
+    #[Locked]
     public bool $autosaveCanUndo = false;
 
     public function mountHasAutosave(): void
     {
-        if (! $this->autosaveEnabled) {
+        if (! $this->initializeAutosaveState()) {
             return;
         }
 
@@ -24,11 +26,7 @@ trait HasAutosave
         );
     }
 
-    /**
-     * Edit pages write to the database, so persist dehydrated state.
-     *
-     * @return array<string, mixed>
-     */
+    /** @return array<string, mixed> */
     protected function getAutosaveData(): array
     {
         $form = $this->resolveAutosaveForm();
@@ -61,10 +59,21 @@ trait HasAutosave
 
             $this->getRecord()->refresh();
 
+            $this->rememberAutosavedData();
+
             $this->afterAutosave($this->getRecord());
 
             return true;
         });
+    }
+
+    // Re-baseline Filament's unsaved-changes hash like save() does, so
+    // ->unsavedChangesAlerts() doesn't warn about already-written changes.
+    protected function rememberAutosavedData(): void
+    {
+        if (method_exists($this, 'rememberData')) {
+            $this->rememberData();
+        }
     }
 
     public function undoAutosave(): void
@@ -97,6 +106,8 @@ trait HasAutosave
                 $this->prepareAutosavePayload($this->getAutosaveData())
             );
 
+            $this->rememberAutosavedData();
+
             Cache::forget($this->getUndoCacheKey());
             $this->autosaveCanUndo = false;
 
@@ -120,9 +131,7 @@ trait HasAutosave
             return false;
         }
 
-        // Restrict to real stored columns: a field name that collides with a
-        // relationship or accessor must not trigger a lazy load or snapshot a
-        // non-column value that would break the undo write.
+        // Real columns only: a relationship/accessor name would break the undo write.
         if (method_exists($record, 'getAttributes')) {
             $fieldKeys = array_values(array_intersect($fieldKeys, array_keys($record->getAttributes())));
 
@@ -147,8 +156,7 @@ trait HasAutosave
     }
 
     /**
-     * JSON round-trip so Carbon/Enums become scalars and JSON-cast
-     * columns stay arrays (prevents Eloquent double-encoding on undo).
+     * JSON round-trip: scalarises Carbon/Enums without double-encoding JSON casts.
      *
      * @param  array<string, mixed>  $data
      * @return array<string, mixed>
@@ -181,8 +189,7 @@ trait HasAutosave
         //
     }
 
-    // Wrap the write in a transaction like Filament's save() so a mid-write
-    // failure rolls back; direct write when the page lacks the helpers.
+    // Transaction like Filament's save(); direct write if the page lacks the helpers.
     protected function autosaveWithinTransaction(callable $write): void
     {
         if (! method_exists($this, 'beginDatabaseTransaction')
@@ -206,24 +213,14 @@ trait HasAutosave
     }
 
     /**
-     * Never write a blank value to a required field — it would violate a NOT NULL
-     * column and fail the whole save. Autosave keeps the last valid value until
-     * the user fills the field and submits.
+     * A blank required field would violate NOT NULL and fail the whole write.
      *
      * @param  array<string, mixed>  $data
      * @return array<string, mixed>
      */
     protected function dropBlankRequiredAutosaveFields(array $data): array
     {
-        $form = $this->resolveAutosaveForm();
-
-        if ($form === null || ! method_exists($form, 'getFlatFields')) {
-            return $data;
-        }
-
-        foreach ($form->getFlatFields(withHidden: true) as $key => $field) {
-            $name = explode('.', (string) $key, 2)[0];
-
+        foreach ($this->getAutosaveFields() as $name => $field) {
             if (array_key_exists($name, $data)
                 && blank($data[$name])
                 && method_exists($field, 'isRequired')

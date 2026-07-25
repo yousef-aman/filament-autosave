@@ -84,3 +84,63 @@ test('afterAutosave runs after a successful edit save', function () {
 
     expect($page->afterRan)->toBeTrue();
 });
+
+test('an edit autosave re-baselines Filament unsaved-changes tracking', function () {
+    $page = new class extends AutosaveEditFormComponent
+    {
+        public int $rememberedCount = 0;
+
+        protected function rememberData(): void
+        {
+            $this->rememberedCount++;
+        }
+    };
+
+    $page->mountHasAutosave();
+    $page->data = ['title' => 'Changed'];
+    $page->autosave();
+
+    expect($page->rememberedCount)->toBe(1);
+});
+
+test('an undo re-baselines Filament unsaved-changes tracking', function () {
+    $page = new class extends AutosaveEditFormComponent
+    {
+        public int $rememberedCount = 0;
+
+        protected function rememberData(): void
+        {
+            $this->rememberedCount++;
+        }
+    };
+
+    $page->mountHasAutosave();
+    Cache::put(
+        (fn () => $this->getUndoCacheKey())->call($page),
+        ['title' => 'Original'],
+        now()->addMinutes(5),
+    );
+
+    $page->undoAutosave();
+
+    expect($page->rememberedCount)->toBe(1);
+});
+
+test('a create-page draft autosave does not re-baseline unsaved-changes tracking', function () {
+    $page = new class extends AutosaveCreateFormComponent
+    {
+        public int $rememberedCount = 0;
+
+        protected function rememberData(): void
+        {
+            $this->rememberedCount++;
+        }
+    };
+
+    $page->mountHasAutosaveForCreate();
+    $page->data = ['title' => 'Drafted'];
+    $page->autosave();
+
+    // Nothing was persisted, so the form really does still have unsaved changes.
+    expect($page->rememberedCount)->toBe(0);
+});

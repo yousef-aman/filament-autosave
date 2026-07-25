@@ -3,7 +3,14 @@
 return [
     'debounce' => 1500,
 
-    'except' => [],
+    // ->password() inputs are always dropped, regardless of this list.
+    'except' => [
+        'password',
+        'password_confirmation',
+        'current_password',
+        'new_password',
+        'new_password_confirmation',
+    ],
 
     'show_timestamp' => true,
 

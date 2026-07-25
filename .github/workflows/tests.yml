@@ -15,10 +15,17 @@ jobs:
         filament: ['^4.0', '^5.0']
         testbench: ['^10.0']
         include:
-          # Filament v4 also supports Laravel 11 (testbench ^9); v5 requires Laravel 12.
+          # Laravel 11 (testbench ^9) and Laravel 13 (testbench ^11) — both
+          # Filament majors accept illuminate ^11.28|^12|^13.
           - php: '8.3'
             filament: '^4.0'
             testbench: '^9.0'
+          - php: '8.4'
+            filament: '^4.0'
+            testbench: '^11.0'
+          - php: '8.4'
+            filament: '^5.0'
+            testbench: '^11.0'
           # Lowest supported stack: catches signature drift in the Filament
           # internals the traits couple to before it reaches published users.
           - php: '8.2'

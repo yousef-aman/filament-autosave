@@ -5,32 +5,52 @@ namespace YousefAman\FilamentAutosave;
 use Illuminate\Contracts\Support\Arrayable;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
+use Livewire\Attributes\Locked;
 use Livewire\Features\SupportFileUploads\TemporaryUploadedFile;
 
 trait HasAutosaveBase
 {
+    // Client-readable mirror of shouldAutosave(). Locked so the browser cannot
+    // re-enable autosave on a page that disabled it.
+    #[Locked]
     public bool $autosaveEnabled = true;
 
+    #[Locked]
     public string $autosaveSnapshotHash = '';
 
+    #[Locked]
     public int $autosaveDebounceMs = 0;
-
-    protected int $autosaveDebounce = 0;
-
-    /** @var array<string> */
-    protected array $autosaveExcept = [];
 
     protected bool $isAutosaving = false;
 
+    protected function shouldAutosave(): bool
+    {
+        return true;
+    }
+
+    /** Milliseconds; null inherits the plugin/config value. */
+    protected function autosaveDebounce(): ?int
+    {
+        return null;
+    }
+
+    /** @return array<string> */
+    protected function autosaveExcept(): array
+    {
+        return [];
+    }
+
     public function isAutosaveEnabled(): bool
     {
-        return $this->autosaveEnabled;
+        return $this->autosaveEnabled && $this->shouldAutosave();
     }
 
     public function getAutosaveDebounce(): int
     {
-        if ($this->autosaveDebounce > 0) {
-            return $this->autosaveDebounce;
+        $pageDebounce = $this->autosaveDebounce();
+
+        if ($pageDebounce !== null && $pageDebounce > 0) {
+            return $pageDebounce;
         }
 
         return AutosavePlugin::tryGet()?->getDebounce()
@@ -43,13 +63,20 @@ trait HasAutosaveBase
         return array_values(array_unique([
             ...config('filament-autosave.except', []),
             ...(AutosavePlugin::tryGet()?->getExcept() ?? []),
-            ...$this->autosaveExcept,
+            ...$this->autosaveExcept(),
         ]));
+    }
+
+    protected function initializeAutosaveState(): bool
+    {
+        $this->autosaveEnabled = $this->shouldAutosave();
+
+        return $this->autosaveEnabled;
     }
 
     protected function performAutosave(callable $persist): void
     {
-        if (! $this->autosaveEnabled || $this->isAutosaving) {
+        if (! $this->isAutosaveEnabled() || $this->isAutosaving) {
             return;
         }
 
@@ -88,8 +115,7 @@ trait HasAutosaveBase
                 timestamp: now()->isoFormat('LT'),
             );
         } catch (\Throwable $e) {
-            // Log the type only — an exception message (e.g. a QueryException) can
-            // interpolate the user's field values, which may be sensitive.
+            // Type only: an exception message can interpolate sensitive field values.
             Log::warning('Autosave failed', ['exception' => $e::class]);
 
             $this->dispatch('autosave-status', status: 'error');
@@ -113,12 +139,7 @@ trait HasAutosaveBase
         return [];
     }
 
-    /**
-     * Raw form state (what the user typed). The Edit trait overrides this to
-     * persist dehydrated state instead.
-     *
-     * @return array<string, mixed>
-     */
+    /** @return array<string, mixed> raw form state; the Edit trait persists dehydrated state */
     protected function getAutosaveData(): array
     {
         $form = $this->resolveAutosaveForm();
@@ -130,12 +151,7 @@ trait HasAutosaveBase
         return $this->stripFileUploads($this->normalizeStateArray($form->getRawState()));
     }
 
-    /**
-     * Dehydrated form state without validation: mirrors Schema::getStateSnapshot,
-     * applying casts/dehydrateStateUsing and dropping dehydrated(false) fields.
-     *
-     * @return array<string, mixed>
-     */
+    /** @return array<string, mixed> mirrors Schema::getStateSnapshot, minus validation */
     protected function dehydrateAutosaveState(object $form): array
     {
         if (! method_exists($form, 'dehydrateState')) {
@@ -167,8 +183,7 @@ trait HasAutosaveBase
     }
 
     /**
-     * Drop top-level keys not backed by a declared field (guards mass-assignment
-     * of injected columns). Nested keys rely on the model's $fillable/$guarded.
+     * Guards mass-assignment of injected columns; nested keys rely on $fillable.
      *
      * @param  array<string, mixed>  $state
      * @return array<string, mixed>
@@ -186,6 +201,24 @@ trait HasAutosaveBase
         }
 
         return array_intersect_key($state, $allowed);
+    }
+
+    /** @return array<string, object> keyed by top-level state name */
+    protected function getAutosaveFields(): array
+    {
+        $form = $this->resolveAutosaveForm();
+
+        if ($form === null || ! method_exists($form, 'getFlatFields')) {
+            return [];
+        }
+
+        $fields = [];
+
+        foreach ($form->getFlatFields(withHidden: true) as $key => $field) {
+            $fields[explode('.', (string) $key, 2)[0]] ??= $field;
+        }
+
+        return $fields;
     }
 
     /**
@@ -220,32 +253,44 @@ trait HasAutosaveBase
      */
     protected function prepareAutosavePayload(array $data): array
     {
-        return AutosaveManager::excludeFields(
-            $this->stripFileUploads($data),
-            $this->getAutosaveExcept(),
+        return $this->dropPasswordFields(
+            AutosaveManager::excludeFields(
+                $this->stripFileUploads($data),
+                $this->getAutosaveExcept(),
+            )
         );
     }
 
     /**
-     * Drop any value a field's own option rule would reject (Select/Radio/enum
-     * membership, incl. tenant-scoped relationship options). Autosave skips
-     * validation, so without this a crafted state could persist an out-of-scope
-     * value that a normal save rejects. Invalid fields are skipped, not blocked.
+     * Edit would commit a half-typed secret; Create drafts cache raw state.
+     *
+     * @param  array<string, mixed>  $data
+     * @return array<string, mixed>
+     */
+    protected function dropPasswordFields(array $data): array
+    {
+        foreach ($this->getAutosaveFields() as $name => $field) {
+            if (array_key_exists($name, $data)
+                && method_exists($field, 'isPassword')
+                && $field->isPassword()
+            ) {
+                unset($data[$name]);
+            }
+        }
+
+        return $data;
+    }
+
+    /**
+     * Autosave skips validation, so a crafted state could otherwise persist an
+     * out-of-scope option value that a normal save rejects.
      *
      * @param  array<string, mixed>  $data
      * @return array<string, mixed>
      */
     protected function enforceFieldOptionRules(array $data): array
     {
-        $form = $this->resolveAutosaveForm();
-
-        if ($form === null || ! method_exists($form, 'getFlatFields')) {
-            return $data;
-        }
-
-        foreach ($form->getFlatFields(withHidden: true) as $key => $field) {
-            $name = explode('.', (string) $key, 2)[0];
-
+        foreach ($this->getAutosaveFields() as $name => $field) {
             if (! array_key_exists($name, $data) || ! method_exists($field, 'getInValidationRule')) {
                 continue;
             }
@@ -294,8 +339,6 @@ trait HasAutosaveBase
     }
 
     /**
-     * Recursively drop TemporaryUploadedFile leaves, keeping their siblings.
-     *
      * @param  array<string, mixed>  $data
      * @return array<string, mixed>
      */

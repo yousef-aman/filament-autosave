@@ -2,110 +2,21 @@
 
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
+use Livewire\Attributes\Locked;
 use YousefAman\FilamentAutosave\HasAutosave;
+use YousefAman\FilamentAutosave\HasAutosaveBase;
+use YousefAman\FilamentAutosave\Tests\Fixtures\AutosaveCreateFormComponent;
+use YousefAman\FilamentAutosave\Tests\Fixtures\DisabledEditPage;
+use YousefAman\FilamentAutosave\Tests\Fixtures\FakeEditPage;
+use YousefAman\FilamentAutosave\Tests\Fixtures\OverridingEditPage;
 
 beforeEach(function () {
     Cache::flush();
 });
 
-function makeEditPage(array $formState = [], array $dbState = []): object
+function makeEditPage(array $formState = [], array $dbState = []): FakeEditPage
 {
-    return new class($formState, $dbState)
-    {
-        use HasAutosave;
-
-        public object $form;
-
-        public ?array $data = [];
-
-        /** @var array<string, mixed> */
-        public array $dispatched = [];
-
-        /** @var array<int, array<string, mixed>> */
-        public array $updates = [];
-
-        public int $refreshCount = 0;
-
-        private array $dbState;
-
-        public function __construct(array $formState, array $dbState)
-        {
-            $this->dbState = $dbState;
-
-            $page = $this;
-            $this->form = new class($page, $formState)
-            {
-                private object $page;
-
-                private array $state;
-
-                public function __construct(object $page, array $state)
-                {
-                    $this->page = $page;
-                    $this->state = $state;
-                }
-
-                public function getRawState(): array
-                {
-                    return $this->state;
-                }
-
-                public function fill(array $data): void
-                {
-                    $this->state = $data;
-                }
-
-                public function setState(array $state): void
-                {
-                    $this->state = $state;
-                }
-            };
-        }
-
-        public function dispatch(string $event, ...$params): void
-        {
-            $this->dispatched[] = ['event' => $event, 'params' => $params];
-        }
-
-        public function authorizeAccess(): void
-        {
-            //
-        }
-
-        public function getRecord(): object
-        {
-            return new class($this->dbState, function () {
-                $this->refreshCount++;
-            })
-            {
-                public function __construct(public array $fields, public Closure $onRefresh) {}
-
-                public function refresh(): static
-                {
-                    ($this->onRefresh)();
-
-                    return $this;
-                }
-
-                public function only(array $keys): array
-                {
-                    return array_intersect_key($this->fields, array_flip($keys));
-                }
-
-                public function getKey(): int
-                {
-                    return 1;
-                }
-            };
-        }
-
-        public function handleRecordUpdate(object $record, array $data): object
-        {
-            $this->updates[] = $data;
-
-            return $record;
-        }
-    };
+    return new FakeEditPage($formState, $dbState);
 }
 
 test('isAutosaveEnabled defaults to true', function () {
@@ -128,35 +39,87 @@ test('getAutosaveDebounce falls back to config', function () {
     expect(makeEditPage()->getAutosaveDebounce())->toBe(2000);
 });
 
-test('getAutosaveDebounce honors page-level override', function () {
+test('getAutosaveDebounce honors the page-level autosaveDebounce() override', function () {
     config(['filament-autosave.debounce' => 1500]);
 
-    $page = makeEditPage();
-    (fn () => $this->autosaveDebounce = 3000)->call($page);
-
-    expect($page->getAutosaveDebounce())->toBe(3000);
+    expect((new OverridingEditPage)->getAutosaveDebounce())->toBe(3000);
 });
 
-test('getAutosaveExcept merges config and page lists', function () {
+test('getAutosaveExcept merges config and the page-level autosaveExcept() override', function () {
     config(['filament-autosave.except' => ['token']]);
 
-    $page = makeEditPage();
-    (fn () => $this->autosaveExcept = ['password'])->call($page);
-
-    expect($page->getAutosaveExcept())->toContain('token')->toContain('password');
+    expect((new OverridingEditPage)->getAutosaveExcept())
+        ->toContain('token')
+        ->toContain('secret_note');
 });
 
 test('mountHasAutosave exposes the resolved debounce for the indicator', function () {
     config(['filament-autosave.debounce' => 1750]);
 
-    $page = makeEditPage(['name' => 'John']);
-    (fn () => $this->autosaveDebounce = 2600)->call($page);
-
+    $page = new OverridingEditPage;
     $page->mountHasAutosave();
 
     // Page-level override must reach the frontend, not just the plugin value.
-    expect($page->autosaveDebounceMs)->toBe(2600);
+    expect($page->autosaveDebounceMs)->toBe(3000);
 });
+
+test('shouldAutosave() false disables autosave and mirrors onto the client property', function () {
+    $page = new DisabledEditPage;
+    $page->mountHasAutosave();
+
+    expect($page->autosaveEnabled)->toBeFalse()
+        ->and($page->isAutosaveEnabled())->toBeFalse();
+
+    $page->form->setState(['title' => 'Changed']);
+    $page->autosave();
+
+    expect($page->updates)->toBeEmpty();
+});
+
+test('a page that disabled autosave cannot be re-enabled by tampering with the mirror property', function () {
+    $page = new DisabledEditPage;
+    $page->mountHasAutosave();
+
+    // shouldAutosave() stays authoritative even past #[Locked].
+    $page->autosaveEnabled = true;
+
+    $page->form->setState(['title' => 'Changed']);
+    $page->autosave();
+
+    expect($page->updates)->toBeEmpty();
+});
+
+test('a page class can declare its own autosave settings properties without a fatal trait conflict', function () {
+    // PHP fatals if a class redeclares a trait property with a different default.
+    $traitProperties = array_map(
+        fn (ReflectionProperty $property) => $property->getName(),
+        (new ReflectionClass(HasAutosaveBase::class))->getProperties(),
+    );
+
+    expect($traitProperties)
+        ->not->toContain('autosaveDebounce')
+        ->not->toContain('autosaveExcept');
+
+    $page = new class extends FakeEditPage
+    {
+        protected int $autosaveDebounce = 4000;
+
+        /** @var array<string> */
+        protected array $autosaveExcept = ['nope'];
+    };
+
+    expect($page->getAutosaveDebounce())->toBeInt();
+});
+
+test('every public livewire property the traits add is locked against client updates', function (string $class, array $properties) {
+    foreach ($properties as $property) {
+        expect((new ReflectionProperty($class, $property))->getAttributes(Locked::class))
+            ->not->toBeEmpty("{$class}::\${$property} must be #[Locked]");
+    }
+})->with([
+    [FakeEditPage::class, ['autosaveEnabled', 'autosaveSnapshotHash', 'autosaveDebounceMs', 'autosaveCanUndo']],
+    [AutosaveCreateFormComponent::class, ['autosaveEnabled', 'autosaveSnapshotHash', 'autosaveDebounceMs', 'autosaveHasDraft']],
+]);
 
 test('mountHasAutosave sets snapshot hash', function () {
     $page = makeEditPage(['name' => 'John']);
@@ -192,11 +155,11 @@ test('autosave persists changed data via handleRecordUpdate', function () {
 });
 
 test('autosave excludes reserved fields before persisting', function () {
-    $page = makeEditPage(['title' => 'A', 'password' => 'secret']);
-    (fn () => $this->autosaveExcept = ['password'])->call($page);
+    $page = makeEditPage(['title' => 'A', 'secret_note' => 'secret']);
+    $page->exceptFields = ['secret_note'];
     $page->mountHasAutosave();
 
-    $page->form->setState(['title' => 'B', 'password' => 'newsecret']);
+    $page->form->setState(['title' => 'B', 'secret_note' => 'newsecret']);
     $page->autosave();
 
     expect($page->updates[0])->toBe(['title' => 'B']);

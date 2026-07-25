@@ -23,6 +23,9 @@ function makeCreatePage(array $formState = []): object
         /** @var array<int, array<string, mixed>> */
         public array $dispatched = [];
 
+        /** @var array<string> */
+        public array $exceptFields = [];
+
         public function __construct(array $formState)
         {
             $this->form = new class($formState)
@@ -59,6 +62,12 @@ function makeCreatePage(array $formState = []): object
         public function authorizeAccess(): void
         {
             //
+        }
+
+        /** @return array<string> */
+        protected function autosaveExcept(): array
+        {
+            return $this->exceptFields;
         }
     };
 }
@@ -98,18 +107,18 @@ test('autosave skips persistence when data unchanged', function () {
 });
 
 test('autosave excludes reserved fields', function () {
-    $page = makeCreatePage(['title' => 'A', 'password' => 'secret']);
-    (fn () => $this->autosaveExcept = ['password'])->call($page);
+    $page = makeCreatePage(['title' => 'A', 'secret_note' => 'secret']);
+    $page->exceptFields = ['secret_note'];
     $page->mountHasAutosaveForCreate();
 
-    $page->form->setState(['title' => 'B', 'password' => 'newsecret']);
+    $page->form->setState(['title' => 'B', 'secret_note' => 'newsecret']);
     $page->autosave();
 
     $key = AutosaveManager::cacheKey(get_class($page));
     $cached = Cache::get($key);
 
     expect($cached)->toHaveKey('title', 'B');
-    expect($cached)->not->toHaveKey('password');
+    expect($cached)->not->toHaveKey('secret_note');
 });
 
 test('autosave strips empty values from payload', function () {
@@ -164,9 +173,9 @@ test('restoreDraft dispatches idle when no draft exists so the indicator does no
 
 test('restoreDraft excludes reserved fields from cached data', function () {
     $page = makeCreatePage();
-    (fn () => $this->autosaveExcept = ['password'])->call($page);
+    $page->exceptFields = ['secret_note'];
     $key = AutosaveManager::cacheKey(get_class($page));
-    Cache::put($key, ['title' => 'Hello', 'password' => 'leaked'], 3600);
+    Cache::put($key, ['title' => 'Hello', 'secret_note' => 'leaked'], 3600);
 
     $page->restoreDraft();
 
