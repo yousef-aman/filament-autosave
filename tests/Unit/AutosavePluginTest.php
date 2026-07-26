@@ -1,5 +1,7 @@
 <?php
 
+use Filament\Support\Facades\FilamentView;
+use Filament\View\PanelsRenderHook;
 use YousefAman\FilamentAutosave\AutosavePlugin;
 use YousefAman\FilamentAutosave\Tests\Fixtures\AutosaveCreateFormComponent;
 use YousefAman\FilamentAutosave\Tests\Fixtures\AutosaveEditFormComponent;
@@ -40,6 +42,43 @@ test('resolveAutosaveMode returns the first matching mode', function () {
         ->call(autosavePlugin(), [stdClass::class, AutosaveCreateFormComponent::class]);
 
     expect($mode)->toBe('create');
+});
+
+test('the indicator renders once from the header hook, not again at the end of the page', function () {
+    $plugin = autosavePlugin();
+    $plugin->boot(Filament\Panel::make());
+
+    $scopes = [AutosaveEditFormComponent::class];
+
+    FilamentView::renderHook(PanelsRenderHook::PAGE_START, scopes: $scopes);
+    $header = (string) FilamentView::renderHook(PanelsRenderHook::PAGE_HEADER_ACTIONS_BEFORE, scopes: $scopes);
+    $end = (string) FilamentView::renderHook(PanelsRenderHook::PAGE_END, scopes: $scopes);
+
+    expect($header)->toContain('fi-autosave-indicator');
+    expect($end)->toBe('');
+});
+
+test('the indicator falls back to the end of the page when no header is rendered', function () {
+    $plugin = autosavePlugin();
+    $plugin->boot(Filament\Panel::make());
+
+    $scopes = [AutosaveEditFormComponent::class];
+
+    // A page overriding getHeader() never fires the header-actions hook.
+    FilamentView::renderHook(PanelsRenderHook::PAGE_START, scopes: $scopes);
+    $end = (string) FilamentView::renderHook(PanelsRenderHook::PAGE_END, scopes: $scopes);
+
+    expect($end)->toContain('fi-autosave-indicator');
+});
+
+test('the end-of-page fallback stays silent for pages without autosave', function () {
+    $plugin = autosavePlugin();
+    $plugin->boot(Filament\Panel::make());
+
+    FilamentView::renderHook(PanelsRenderHook::PAGE_START, scopes: [stdClass::class]);
+    $end = (string) FilamentView::renderHook(PanelsRenderHook::PAGE_END, scopes: [stdClass::class]);
+
+    expect($end)->toBe('');
 });
 
 test('getDebounce and getCacheTtl fall back to config', function () {

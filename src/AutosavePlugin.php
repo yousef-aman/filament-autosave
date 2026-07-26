@@ -28,6 +28,8 @@ class AutosavePlugin implements Plugin
 
     protected int|Closure|null $cacheTtl = null;
 
+    protected bool $indicatorRendered = false;
+
     /** @var array<class-string, 'edit'|'create'|null> */
     protected static array $modeCache = [];
 
@@ -154,21 +156,43 @@ class AutosavePlugin implements Plugin
             ? PanelsRenderHook::PAGE_HEADER_ACTIONS_AFTER
             : PanelsRenderHook::PAGE_HEADER_ACTIONS_BEFORE;
 
-        FilamentView::registerRenderHook($hookName, function (array $scopes) {
-            $mode = $this->resolveAutosaveMode($scopes);
+        FilamentView::registerRenderHook(PanelsRenderHook::PAGE_START, function (): string {
+            $this->indicatorRendered = false;
 
-            if ($mode === null) {
-                return '';
-            }
-
-            return new HtmlString(
-                view('filament-autosave::autosave-indicator', [
-                    'debounce' => $this->getDebounce(),
-                    'showTimestamp' => $this->shouldShowTimestamp(),
-                    'mode' => $mode,
-                ])->render()
-            );
+            return '';
         });
+
+        FilamentView::registerRenderHook(
+            $hookName,
+            fn (array $scopes): string => $this->renderIndicator($scopes),
+        );
+
+        // A page that renders no header never renders the hook above; fall back
+        // rather than silently disabling autosave.
+        FilamentView::registerRenderHook(
+            PanelsRenderHook::PAGE_END,
+            fn (array $scopes): string => $this->indicatorRendered ? '' : $this->renderIndicator($scopes),
+        );
+    }
+
+    /** @param  array<mixed>  $scopes */
+    protected function renderIndicator(array $scopes): string
+    {
+        $mode = $this->resolveAutosaveMode($scopes);
+
+        if ($mode === null) {
+            return '';
+        }
+
+        $this->indicatorRendered = true;
+
+        return (string) new HtmlString(
+            view('filament-autosave::autosave-indicator', [
+                'debounce' => $this->getDebounce(),
+                'showTimestamp' => $this->shouldShowTimestamp(),
+                'mode' => $mode,
+            ])->render()
+        );
     }
 
     /** @param  array<mixed>  $scopes */

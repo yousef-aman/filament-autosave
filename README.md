@@ -75,17 +75,45 @@ The form autosaves 1.5 s after the last keystroke. After each save, an **Undo** 
 Autosave persists the form's **dehydrated** state — the same values Filament would
 write on a normal save (`dehydrateStateUsing()` transforms and casts applied,
 `dehydrated(false)` fields skipped) — but without running validation, so an
-incomplete form never blocks the save. Relationship-backed fields — anything using
-`->relationship()`, a multiple `Select`, `BelongsToMany`, etc. — are
-`dehydrated(false)` and are therefore **not** autosaved; they persist on explicit
-form submit. A plain (non-relationship) `Repeater` or `CheckboxList` stores to its
-own column, so it *is* dehydrated and *is* autosaved.
+incomplete form never blocks the save. What that means per field type:
 
-Because validation is skipped, field-level rules (`minLength`, `maxValue`,
-`in:`, etc.) are **not** enforced during autosave — only on explicit submit. A
-`required` field left blank is skipped rather than written (so it never violates a
-`NOT NULL` column), and you can enforce specific rules non-blockingly via
-`getAutosaveValidationRules()` (see below).
+| Field | Autosaved? |
+| --- | --- |
+| Plain column-backed field | ✓ |
+| Plain (non-relationship) `Repeater`, `CheckboxList` — stores to its own column | ✓ |
+| Single `Select::relationship()` (`BelongsTo`) — Filament dehydrates the foreign key | ✓ |
+| Multiple `Select`, `BelongsToMany`, `Repeater::relationship()`, and anything else Filament persists through `saveRelationships()` | ✗ — on explicit submit only |
+| `->dehydrated(false)` | ✗ |
+
+Because validation is skipped, field-level rules (`minLength`, `maxValue`, etc.)
+are **not** enforced during autosave — only on explicit submit. Two things are
+always enforced, because skipping them would let autosave persist what a normal
+save rejects:
+
+- A `required` field left blank is skipped rather than written, so it never
+  violates a `NOT NULL` column.
+- A `Select`, `CheckboxList` or `ToggleButtons` value outside the field's own
+  options (including options scoped to the current tenant or team) is skipped.
+
+You can enforce further rules non-blockingly via `getAutosaveValidationRules()`
+(see below).
+
+### Fields nested under a state path
+
+A field inside a `Group`/`Section` with a `statePath()`, or inside a `Repeater`,
+lives under a nested key (`settings.api_key`, `items.*.secret`). That whole
+top-level key is written as one column value, so autosave writes it **only when
+every field beneath it survived** the rules above. If one nested field is skipped
+— a password, an out-of-options `Select`, a blank `required` — the entire container
+is left untouched rather than written back without it, which would destroy the
+stored value of the skipped field.
+
+Practically: a `statePath()`ed group or a `Repeater` that contains a
+`->password()` field is never autosaved. The rest of the form still is.
+
+Create-page drafts are re-filled into the form instead of written to a column, so
+there is nothing to destroy — a nested secret is pruned from the draft and its
+siblings are kept.
 
 ### Create pages
 
@@ -203,6 +231,11 @@ AutosavePlugin::make()
     ->indicatorPosition('after');
 ```
 
+`indicatorPosition` places the indicator before or after the page header actions.
+A page that overrides `getHeader()`, or that has no heading, header actions and
+breadcrumbs at all, renders no header — there the indicator falls back to the end
+of the page rather than disappearing along with autosave.
+
 ### Per-page disable
 
 ```php
@@ -246,14 +279,21 @@ protected function getAutosaveValidationRules(): array
 }
 ```
 
-`getAutosaveValidationRules()` is checked *per changed field only* — invalid fields are silently skipped so autosave never blocks the user. Full form validation still runs at submit time.
+Every rule whose field is part of the payload is checked; a field that fails is
+silently skipped so autosave never blocks the user. Full form validation still runs
+at submit time.
+
+Rule keys may target nested paths (`'items.*.qty' => ['integer', 'min:1']`). A
+failure there skips the whole top-level key (`items`) for the same reason nested
+containers are all-or-nothing — see [above](#fields-nested-under-a-state-path).
 
 Autosave runs `mutateFormDataBeforeSave()` and writes inside a database
 transaction, matching Filament's `save()`. It deliberately does **not** fire
 Filament's `beforeSave`/`afterSave` hooks or the `RecordUpdated`/`RecordSaved`
-events — use `afterAutosave()` for work that should run on every autosave. It does
-re-baseline Filament's unsaved-changes tracking, so a panel using
-`->unsavedChangesAlerts()` won't warn about changes autosave already wrote.
+events — use `afterAutosave()` for work that should run on every autosave. It
+re-baselines Filament's unsaved-changes tracking whenever the write covered every
+filled field, so a panel using `->unsavedChangesAlerts()` won't warn about changes
+autosave already wrote.
 
 ## Undo (Edit pages)
 
@@ -264,21 +304,32 @@ After a successful autosave, the indicator shows an **Undo** button for 5 second
 3. Re-fills the form.
 4. Clears the undo snapshot.
 
+Undo only replays a snapshot created by the *same live page instance*, so a
+snapshot left behind by an earlier page load can't roll back an edit made since.
+The snapshot covers real columns only — an accessor/mutator-backed field is not
+undoable.
+
 ## Files and sensitive data
 
 Dropped from every autosave payload automatically:
 
 - `TemporaryUploadedFile` instances (pending file uploads).
-- Any `TextInput` marked `->password()`. On an Edit page autosave would otherwise
-  commit a half-typed secret; on a Create page it would sit in the draft cache in
-  plain text.
+- Any `TextInput` marked `->password()` **or** `->type('password')`, at any depth.
+  On an Edit page autosave would otherwise commit a half-typed secret; on a Create
+  page it would sit in the draft cache in plain text.
 - The `except` list (config + plugin + page), applied to both the autosave write
   and the draft restore.
-- Client-submitted keys that don't map to a declared form field, so autosave can
-  only ever write real form fields.
+- Client-submitted keys that don't map to a declared form field — at every depth,
+  so a crafted payload cannot smuggle extra keys into a JSON column either.
 
-`except` matches **top-level** field names only; it does not descend into nested
-keys (e.g. a secret inside a Repeater row).
+`except` matches **top-level** field names only; to drop a field nested inside a
+`Repeater` row or a `statePath()`ed group, mark it `->password()` or
+`->dehydrated(false)`.
+
+Because a skipped field is genuinely unsaved, an autosave that had to skip a field
+the user actually filled in does **not** re-baseline Filament's unsaved-changes
+tracking — so `->unsavedChangesAlerts()` still warns before navigation instead of
+reporting the typed secret as saved.
 
 `->dehydrated(false)` keeps a field out of **Edit-page writes**, but *not* out of
 Create-page drafts — those are built from raw form state precisely so the user
@@ -292,7 +343,9 @@ Publish translations with `--tag="filament-autosave-translations"` to customize 
 ## Testing
 
 ```bash
-composer test
+composer test                          # everything
+vendor/bin/pest --testsuite=Unit       # traits and manager, no panel
+vendor/bin/pest --testsuite=Integration  # real EditRecord/CreateRecord in a booted panel
 ```
 
 ## License

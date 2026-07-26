@@ -4,6 +4,19 @@ use Filament\Facades\Filament;
 use Illuminate\Support\Facades\Cache;
 use YousefAman\FilamentAutosave\AutosaveManager;
 
+function fakeFilamentPanel(string $guard, int $id): void
+{
+    $authGuard = Mockery::mock(\Illuminate\Contracts\Auth\Guard::class);
+    $authGuard->shouldReceive('id')->andReturn($id);
+
+    $panel = Mockery::mock(\Filament\Panel::class);
+    $panel->shouldReceive('auth')->andReturn($authGuard);
+    $panel->shouldReceive('getAuthGuard')->andReturn($guard);
+
+    Filament::shouldReceive('getCurrentPanel')->andReturn($panel);
+    Filament::shouldReceive('getTenant')->andReturnNull();
+}
+
 test('it excludes specified fields from data', function () {
     $data = ['name' => 'John', 'password' => 'secret', 'email' => 'john@example.com'];
 
@@ -45,6 +58,15 @@ test('snapshotHash is order-independent', function () {
     expect(AutosaveManager::snapshotHash($a))->toBe(AutosaveManager::snapshotHash($b));
 });
 
+test('snapshotHash detects reordered repeater rows', function () {
+    // Dragging rows only reorders the uuid keys; sorting them would hide it.
+    $before = ['items' => ['b-uuid' => ['title' => 'B'], 'a-uuid' => ['title' => 'A']]];
+    $after = ['items' => ['a-uuid' => ['title' => 'A'], 'b-uuid' => ['title' => 'B']]];
+
+    expect(AutosaveManager::snapshotHash($before))
+        ->not->toBe(AutosaveManager::snapshotHash($after));
+});
+
 test('snapshotHash does not collide on escaped slashes', function () {
     expect(AutosaveManager::snapshotHash(['value' => 'a\\b']))
         ->not->toBe(AutosaveManager::snapshotHash(['value' => 'ab']));
@@ -66,10 +88,17 @@ test('snapshotHash still distinguishes an encodable state from an un-encodable o
 });
 
 test('cacheKey generates correct format for authenticated users', function () {
-    $key = AutosaveManager::cacheKey('App\\Some\\Page');
-    $expectedOwner = auth()->id() ?? session()->getId();
+    fakeFilamentPanel(guard: 'web', id: 9);
 
-    expect($key)->toBe('filament-autosave:'.$expectedOwner.':App\\Some\\Page');
+    expect(AutosaveManager::cacheKey('App\\Some\\Page'))
+        ->toBe('filament-autosave:web:9:App\\Some\\Page');
+});
+
+test('cacheKey never embeds the raw session id of a guest', function () {
+    auth()->logout();
+    $sessionId = session()->getId();
+
+    expect(AutosaveManager::cacheKey('App\\Some\\Page'))->not->toContain($sessionId);
 });
 
 test('cacheKey is scoped by the active tenant', function () {
@@ -86,17 +115,17 @@ test('cacheKey is scoped by the active tenant', function () {
 });
 
 test('currentScope prefers the active panel guard user id over the default guard', function () {
-    $guard = Mockery::mock(\Illuminate\Contracts\Auth\Guard::class);
-    $guard->shouldReceive('id')->andReturn(42);
+    fakeFilamentPanel(guard: 'admins', id: 42);
 
-    $panel = Mockery::mock(\Filament\Panel::class);
-    $panel->shouldReceive('auth')->andReturn($guard);
-
-    Filament::shouldReceive('getCurrentPanel')->andReturn($panel);
-    Filament::shouldReceive('getTenant')->andReturnNull();
-
-    expect(AutosaveManager::currentScope())->toBe('42');
+    expect(AutosaveManager::currentScope())->toBe('admins:42');
 });
+
+test('currentScope separates panels whose guards share a user id', function (string $guard) {
+    // admin #1 and customer #1 are different people.
+    fakeFilamentPanel(guard: $guard, id: 1);
+
+    expect(AutosaveManager::currentScope())->toBe($guard.':1');
+})->with(['admins', 'customers']);
 
 test('cacheKey falls back to session id for guests', function () {
     auth()->logout();

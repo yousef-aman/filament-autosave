@@ -151,6 +151,7 @@ test('undo wraps its restore write in a database transaction', function () {
 
     $undoKey = (fn () => $this->getUndoCacheKey())->call($page);
     Cache::put($undoKey, ['title' => 'previous'], now()->addMinutes(30));
+    $page->autosaveCanUndo = true;
 
     $page->undoAutosave();
 

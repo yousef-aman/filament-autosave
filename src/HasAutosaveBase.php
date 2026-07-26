@@ -3,6 +3,7 @@
 namespace YousefAman\FilamentAutosave;
 
 use Illuminate\Contracts\Support\Arrayable;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 use Livewire\Attributes\Locked;
@@ -183,7 +184,9 @@ trait HasAutosaveBase
     }
 
     /**
-     * Guards mass-assignment of injected columns; nested keys rely on $fillable.
+     * Guards mass-assignment of injected keys at every depth. A declared field
+     * with no declared children is opaque (KeyValue, a plain array column) and
+     * kept verbatim.
      *
      * @param  array<string, mixed>  $state
      * @return array<string, mixed>
@@ -194,16 +197,18 @@ trait HasAutosaveBase
             return $state;
         }
 
-        $allowed = [];
-
-        foreach (array_keys($form->getFlatFields(withHidden: true)) as $key) {
-            $allowed[explode('.', (string) $key, 2)[0]] = true;
-        }
-
-        return array_intersect_key($state, $allowed);
+        return $this->pruneStateToFieldTree(
+            $state,
+            $this->buildAutosaveFieldTree(array_keys($this->getAutosaveFields())),
+        );
     }
 
-    /** @return array<string, object> keyed by top-level state name */
+    /**
+     * Declared fields keyed by full state path, with repeater/builder row keys
+     * collapsed to `*` (dehydration renumbers them).
+     *
+     * @return array<string, array<object>> path pattern => component instances
+     */
     protected function getAutosaveFields(): array
     {
         $form = $this->resolveAutosaveForm();
@@ -212,13 +217,215 @@ trait HasAutosaveBase
             return [];
         }
 
+        $flat = $form->getFlatFields(withHidden: true);
+        $declared = array_fill_keys(array_map(strval(...), array_keys($flat)), true);
+
         $fields = [];
 
-        foreach ($form->getFlatFields(withHidden: true) as $key => $field) {
-            $fields[explode('.', (string) $key, 2)[0]] ??= $field;
+        foreach ($flat as $key => $field) {
+            $fields[$this->normalizeAutosaveFieldPath((string) $key, $declared)][] = $field;
         }
 
         return $fields;
+    }
+
+    /** @param  array<string, true>  $declared */
+    protected function normalizeAutosaveFieldPath(string $key, array $declared): string
+    {
+        $segments = explode('.', $key);
+        $prefix = [];
+        $pattern = [];
+
+        foreach ($segments as $segment) {
+            // A level nested inside another field is a row key, not a field name.
+            $pattern[] = ($prefix !== [] && isset($declared[implode('.', $prefix)]))
+                ? '*'
+                : $segment;
+
+            $prefix[] = $segment;
+        }
+
+        return implode('.', $pattern);
+    }
+
+    /**
+     * @param  array<string>  $patterns
+     * @return array<string, mixed>
+     */
+    protected function buildAutosaveFieldTree(array $patterns): array
+    {
+        $tree = [];
+
+        foreach ($patterns as $pattern) {
+            $branch = &$tree;
+
+            foreach (explode('.', $pattern) as $segment) {
+                $branch[$segment] ??= [];
+                $branch = &$branch[$segment];
+            }
+
+            unset($branch);
+        }
+
+        return $tree;
+    }
+
+    /**
+     * @param  array<string, mixed>  $state
+     * @param  array<string, mixed>  $tree
+     * @return array<string, mixed>
+     */
+    protected function pruneStateToFieldTree(array $state, array $tree): array
+    {
+        if ($tree === []) {
+            return $state;
+        }
+
+        $pruned = [];
+
+        foreach ($state as $key => $value) {
+            $branch = $tree[$key] ?? $tree['*'] ?? null;
+
+            if ($branch === null) {
+                continue;
+            }
+
+            $pruned[$key] = is_array($value)
+                ? $this->pruneStateToFieldTree($value, $branch)
+                : $value;
+        }
+
+        return $pruned;
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     * @return array<string> concrete paths in $data matching a wildcarded pattern
+     */
+    protected function matchAutosavePaths(array $data, string $pattern): array
+    {
+        $paths = [''];
+
+        foreach (explode('.', $pattern) as $segment) {
+            $matched = [];
+
+            foreach ($paths as $prefix) {
+                $parent = $prefix === '' ? $data : data_get($data, $prefix);
+
+                if (! is_array($parent)) {
+                    continue;
+                }
+
+                $keys = $segment === '*'
+                    ? array_keys($parent)
+                    : (array_key_exists($segment, $parent) ? [$segment] : []);
+
+                foreach ($keys as $key) {
+                    $matched[] = $prefix === '' ? (string) $key : $prefix.'.'.$key;
+                }
+            }
+
+            if ($matched === []) {
+                return [];
+            }
+
+            $paths = $matched;
+        }
+
+        return $paths;
+    }
+
+    /** Whether every array level along a pattern still holds the field. */
+    protected function autosavePathIsComplete(mixed $value, string $pattern): bool
+    {
+        $segments = explode('.', $pattern);
+
+        while ($segments !== []) {
+            $segment = array_shift($segments);
+
+            if (! is_array($value)) {
+                return false;
+            }
+
+            if ($segment === '*') {
+                $remaining = implode('.', $segments);
+
+                foreach ($value as $item) {
+                    if (! $this->autosavePathIsComplete($item, $remaining)) {
+                        return false;
+                    }
+                }
+
+                return true;
+            }
+
+            if (! array_key_exists($segment, $value)) {
+                return false;
+            }
+
+            $value = $value[$segment];
+        }
+
+        return true;
+    }
+
+    /**
+     * Removes a path and any container it just emptied, so a group that held only
+     * skipped fields is never written back as an empty value.
+     *
+     * @param  array<string, mixed>  $data
+     */
+    protected function forgetAutosavePath(array &$data, string $path): void
+    {
+        Arr::forget($data, $path);
+
+        $segments = explode('.', $path);
+        array_pop($segments);
+
+        while ($segments !== []) {
+            $parent = implode('.', $segments);
+
+            if (data_get($data, $parent) !== []) {
+                return;
+            }
+
+            Arr::forget($data, $parent);
+            array_pop($segments);
+        }
+    }
+
+    /**
+     * getType() covers both `password()` and a bare `type('password')`.
+     *
+     * @param  array<object>  $fields
+     */
+    protected function isAutosaveSecretField(array $fields): bool
+    {
+        foreach ($fields as $field) {
+            if (method_exists($field, 'isPassword') && $field->isPassword()) {
+                return true;
+            }
+
+            if (method_exists($field, 'getType') && $field->getType() === 'password') {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * @param  array<object>  $fields
+     */
+    protected function anyAutosaveField(array $fields, string $method): bool
+    {
+        foreach ($fields as $field) {
+            if (method_exists($field, $method) && $field->{$method}()) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -269,12 +476,13 @@ trait HasAutosaveBase
      */
     protected function dropPasswordFields(array $data): array
     {
-        foreach ($this->getAutosaveFields() as $name => $field) {
-            if (array_key_exists($name, $data)
-                && method_exists($field, 'isPassword')
-                && $field->isPassword()
-            ) {
-                unset($data[$name]);
+        foreach ($this->getAutosaveFields() as $path => $fields) {
+            if (! $this->isAutosaveSecretField($fields)) {
+                continue;
+            }
+
+            foreach ($this->matchAutosavePaths($data, $path) as $match) {
+                $this->forgetAutosavePath($data, $match);
             }
         }
 
@@ -290,31 +498,47 @@ trait HasAutosaveBase
      */
     protected function enforceFieldOptionRules(array $data): array
     {
-        foreach ($this->getAutosaveFields() as $name => $field) {
-            if (! array_key_exists($name, $data) || ! method_exists($field, 'getInValidationRule')) {
+        foreach ($this->getAutosaveFields() as $path => $fields) {
+            $rules = [];
+
+            foreach ($fields as $field) {
+                if (! method_exists($field, 'getInValidationRule')) {
+                    continue;
+                }
+
+                if (($rule = $field->getInValidationRule()) !== null) {
+                    $rules[] = $rule;
+                }
+            }
+
+            if ($rules === []) {
                 continue;
             }
 
-            $rule = $field->getInValidationRule();
+            foreach ($this->matchAutosavePaths($data, $path) as $match) {
+                $value = data_get($data, $match);
 
-            if ($rule === null) {
-                continue;
-            }
+                if (blank($value) || $this->passesOptionRules($value, $rules)) {
+                    continue;
+                }
 
-            $value = $data[$name];
-
-            // Array fields (CheckboxList, multiple Select) validate per element;
-            // the flat rule against the whole array would reject valid selections.
-            $rules = is_array($value)
-                ? [$name => ['array'], "{$name}.*" => [$rule]]
-                : [$name => [$rule]];
-
-            if (Validator::make([$name => $value], $rules)->fails()) {
-                unset($data[$name]);
+                $this->forgetAutosavePath($data, $match);
             }
         }
 
         return $data;
+    }
+
+    /** @param  array<object>  $rules */
+    protected function passesOptionRules(mixed $value, array $rules): bool
+    {
+        // Array fields (CheckboxList, multiple Select) validate per element;
+        // the flat rule against the whole array would reject valid selections.
+        $constraints = is_array($value)
+            ? ['value' => ['array'], 'value.*' => $rules]
+            : ['value' => $rules];
+
+        return ! Validator::make(['value' => $value], $constraints)->fails();
     }
 
     /**
@@ -323,7 +547,14 @@ trait HasAutosaveBase
      */
     protected function validateAutosaveFields(array $fields): array
     {
-        $rules = array_intersect_key($this->getAutosaveValidationRules(), $fields);
+        $rules = [];
+
+        // A rule may target a nested path ('items.*.qty').
+        foreach ($this->getAutosaveValidationRules() as $key => $rule) {
+            if (array_key_exists(explode('.', (string) $key, 2)[0], $fields)) {
+                $rules[$key] = $rule;
+            }
+        }
 
         if (empty($rules)) {
             return $fields;
@@ -335,7 +566,12 @@ trait HasAutosaveBase
             return $fields;
         }
 
-        return array_diff_key($fields, array_flip(array_keys($validator->failed())));
+        foreach (array_keys($validator->failed()) as $failed) {
+            // Whole container: a partial write would destroy the skipped value.
+            unset($fields[explode('.', (string) $failed, 2)[0]]);
+        }
+
+        return $fields;
     }
 
     /**

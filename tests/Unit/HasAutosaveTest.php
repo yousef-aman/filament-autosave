@@ -222,6 +222,33 @@ test('undoAutosave is a no-op when no snapshot exists', function () {
     expect($page->autosaveCanUndo)->toBeFalse();
 });
 
+test('an undo snapshot survives a value that cannot be JSON encoded', function () {
+    $page = makeEditPage(['title' => 'Original'], ['title' => "\xB1\x31"]);
+    $page->mountHasAutosave();
+
+    $page->form->setState(['title' => 'Updated']);
+    $page->autosave();
+
+    expect($page->autosaveCanUndo)->toBeTrue();
+});
+
+test('undoAutosave refuses a snapshot this page instance did not create', function () {
+    $page = makeEditPage(['title' => 'Current'], ['title' => 'Current']);
+    $page->mountHasAutosave();
+
+    // A stale snapshot could roll back an edit somebody else made since.
+    Cache::put(
+        (fn () => $this->getUndoCacheKey())->call($page),
+        ['title' => 'Ancient'],
+        now()->addMinutes(5),
+    );
+
+    $page->undoAutosave();
+
+    expect($page->updates)->toBeEmpty();
+    expect(end($page->dispatched)['params'])->toHaveKey('status', 'idle');
+});
+
 test('undoAutosave dispatches idle when no snapshot exists so the indicator does not hang', function () {
     $page = makeEditPage(['title' => 'Same'], ['title' => 'Same']);
     $page->mountHasAutosave();

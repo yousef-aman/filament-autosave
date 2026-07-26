@@ -5,6 +5,7 @@ use Illuminate\Support\Facades\Cache;
 use Livewire\Features\SupportFileUploads\TemporaryUploadedFile;
 use YousefAman\FilamentAutosave\AutosaveManager;
 use YousefAman\FilamentAutosave\HasAutosaveForCreate;
+use YousefAman\FilamentAutosave\Tests\Fixtures\AutosaveCreateFormComponent;
 
 beforeEach(function () {
     Cache::flush();
@@ -180,6 +181,23 @@ test('restoreDraft excludes reserved fields from cached data', function () {
     $page->restoreDraft();
 
     expect($page->form->getRawState())->toBe(['title' => 'Hello']);
+});
+
+test('discardDraft is refused when the page denies access', function () {
+    $page = new class extends AutosaveCreateFormComponent
+    {
+        public function authorizeAccess(): void
+        {
+            throw new \RuntimeException('denied');
+        }
+    };
+    $page->mount();
+
+    $key = (fn () => $this->getAutosaveCacheKey())->call($page);
+    AutosaveManager::storeDraft($key, ['title' => 'Draft'], 1);
+
+    expect(fn () => $page->discardDraft())->toThrow(\RuntimeException::class);
+    expect(AutosaveManager::restoreDraft($key))->not->toBeNull();
 });
 
 test('discardDraft clears cache and flips hasDraft', function () {

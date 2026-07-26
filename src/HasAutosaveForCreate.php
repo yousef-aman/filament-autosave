@@ -86,6 +86,10 @@ trait HasAutosaveForCreate
 
     public function discardDraft(): void
     {
+        if (method_exists($this, 'authorizeAccess')) {
+            $this->authorizeAccess();
+        }
+
         $this->clearAutosaveDraft();
 
         $this->dispatch('autosave-status', status: 'idle');

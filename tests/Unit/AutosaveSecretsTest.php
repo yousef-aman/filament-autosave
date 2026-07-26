@@ -47,6 +47,26 @@ test('changing only a password input does not trigger a write at all', function 
     expect($component->written)->toBe([]);
 });
 
+test('a field typed as a password is treated as a secret even without password()', function () {
+    $component = new class extends AutosavePasswordEditFormComponent
+    {
+        public function form(\Filament\Schemas\Schema $schema): \Filament\Schemas\Schema
+        {
+            return $schema->components([
+                \Filament\Forms\Components\TextInput::make('title'),
+                \Filament\Forms\Components\TextInput::make('vault_key')->type('password'),
+            ])->statePath('data');
+        }
+    };
+    $component->mountHasAutosave();
+    $component->data = ['title' => 'Hello', 'vault_key' => 'typed-secret'];
+
+    $component->autosave();
+
+    expect($component->written)->not->toHaveKey('vault_key');
+    expect($component->written)->toHaveKey('title', 'Hello');
+});
+
 test('the shipped config keeps common credential field names out of autosave', function () {
     expect(config('filament-autosave.except'))
         ->toContain('password')

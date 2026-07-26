@@ -8,13 +8,14 @@ use Illuminate\Support\Facades\Cache;
 class AutosaveManager
 {
     /**
-     * Build a deterministic hash of form state, independent of key order.
+     * Build a deterministic hash of form state, independent of top-level key order.
      *
      * @param  array<string, mixed>  $data
      */
     public static function snapshotHash(array $data): string
     {
-        self::sortRecursive($data);
+        // Nested order is data (repeater row order) and must stay significant.
+        ksort($data);
 
         try {
             $encoded = json_encode(
@@ -48,16 +49,28 @@ class AutosaveManager
     /** Tenant + owner scope so drafts never leak across users or tenants. */
     public static function currentScope(): string
     {
-        $owner = self::resolveOwnerId() ?? session()->getId();
+        // Hashed: a verbatim session id in a cache key is a hijacking primitive.
+        $owner = self::resolveOwnerId() ?? 'guest-'.hash('xxh128', session()->getId());
         $tenant = Filament::getTenant()?->getKey();
 
         return ($tenant !== null ? $tenant.':' : '').$owner;
     }
 
     /** Prefer the active panel's guard so custom-guard panels key by user, not session. */
-    private static function resolveOwnerId(): int|string|null
+    private static function resolveOwnerId(): ?string
     {
-        return Filament::getCurrentPanel()?->auth()?->id() ?? auth()->id();
+        $panel = Filament::getCurrentPanel();
+
+        $id = $panel?->auth()?->id() ?? auth()->id();
+
+        if ($id === null) {
+            return null;
+        }
+
+        // Two panels can authenticate different people under the same id.
+        $guard = $panel?->getAuthGuard() ?? config('auth.defaults.guard');
+
+        return $guard.':'.$id;
     }
 
     /** @param  array<string, mixed>  $data */
@@ -79,14 +92,4 @@ class AutosaveManager
         Cache::forget($key);
     }
 
-    private static function sortRecursive(array &$data): void
-    {
-        ksort($data);
-
-        foreach ($data as &$value) {
-            if (is_array($value)) {
-                self::sortRecursive($value);
-            }
-        }
-    }
 }

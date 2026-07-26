@@ -45,7 +45,9 @@ trait HasAutosave
                 $data = $this->mutateFormDataBeforeSave($data);
             }
 
-            $data = $this->dropBlankRequiredAutosaveFields($data);
+            $data = $this->dropIncompleteAutosaveContainers(
+                $this->dropBlankRequiredAutosaveFields($data)
+            );
 
             if (empty($data)) {
                 return false;
@@ -59,7 +61,7 @@ trait HasAutosave
 
             $this->getRecord()->refresh();
 
-            $this->rememberAutosavedData();
+            $this->rememberAutosavedData($data);
 
             $this->afterAutosave($this->getRecord());
 
@@ -67,13 +69,48 @@ trait HasAutosave
         });
     }
 
-    // Re-baseline Filament's unsaved-changes hash like save() does, so
-    // ->unsavedChangesAlerts() doesn't warn about already-written changes.
-    protected function rememberAutosavedData(): void
+    /**
+     * Re-baselines Filament's unsaved-changes hash like save() does. rememberData()
+     * hashes the whole form state, not the payload, so it may only run when the
+     * write covered every filled field — otherwise a deliberately skipped field
+     * would be reported as saved and lost on navigation.
+     *
+     * @param  array<string, mixed>|null  $written  null re-baselines unconditionally
+     */
+    protected function rememberAutosavedData(?array $written = null): void
     {
-        if (method_exists($this, 'rememberData')) {
-            $this->rememberData();
+        if (! method_exists($this, 'rememberData')) {
+            return;
         }
+
+        if ($written !== null && ! $this->autosaveWasLossless($written)) {
+            return;
+        }
+
+        $this->rememberData();
+    }
+
+    /** @param  array<string, mixed>  $written */
+    protected function autosaveWasLossless(array $written): bool
+    {
+        $state = $this->stripFileUploads($this->data ?? []);
+
+        foreach (array_keys($this->getAutosaveFields()) as $path) {
+            foreach ($this->matchAutosavePaths($state, $path) as $match) {
+                if (blank(data_get($state, $match))) {
+                    continue;
+                }
+
+                // Compare the pattern: dehydration renumbers row keys.
+                if (! $this->autosavePathIsComplete($written, $path)) {
+                    return false;
+                }
+
+                break;
+            }
+        }
+
+        return true;
     }
 
     public function undoAutosave(): void
@@ -83,7 +120,9 @@ trait HasAutosave
                 $this->authorizeAccess();
             }
 
-            $snapshot = Cache::get($this->getUndoCacheKey());
+            // #[Locked] and only set by the autosave that created the snapshot, so
+            // a stale entry can't be replayed from a later page load.
+            $snapshot = $this->autosaveCanUndo ? Cache::get($this->getUndoCacheKey()) : null;
 
             if (! is_array($snapshot) || empty($snapshot)) {
                 $this->autosaveCanUndo = false;
@@ -168,7 +207,7 @@ trait HasAutosave
 
             return json_decode($encoded, associative: true, flags: JSON_THROW_ON_ERROR);
         } catch (\Throwable) {
-            return [];
+            return $data;
         }
     }
 
@@ -220,13 +259,40 @@ trait HasAutosave
      */
     protected function dropBlankRequiredAutosaveFields(array $data): array
     {
-        foreach ($this->getAutosaveFields() as $name => $field) {
-            if (array_key_exists($name, $data)
-                && blank($data[$name])
-                && method_exists($field, 'isRequired')
-                && $field->isRequired()
-            ) {
-                unset($data[$name]);
+        foreach ($this->getAutosaveFields() as $path => $fields) {
+            if (! $this->anyAutosaveField($fields, 'isRequired')) {
+                continue;
+            }
+
+            foreach ($this->matchAutosavePaths($data, $path) as $match) {
+                if (blank(data_get($data, $match))) {
+                    $this->forgetAutosavePath($data, $match);
+                }
+            }
+        }
+
+        return $data;
+    }
+
+    /**
+     * A nested state path (a Group's `statePath()`, a Repeater) is written as one
+     * whole column value, so persisting it after a nested field was skipped would
+     * destroy the stored value of that field. Skip the container instead.
+     *
+     * @param  array<string, mixed>  $data
+     * @return array<string, mixed>
+     */
+    protected function dropIncompleteAutosaveContainers(array $data): array
+    {
+        foreach (array_keys($this->getAutosaveFields()) as $path) {
+            if (! str_contains($path, '.')) {
+                continue;
+            }
+
+            $top = explode('.', $path, 2)[0];
+
+            if (array_key_exists($top, $data) && ! $this->autosavePathIsComplete($data, $path)) {
+                unset($data[$top]);
             }
         }
 
