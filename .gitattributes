@@ -1,5 +1,8 @@
-# Keep development-only files out of the distributed package
+# Keep development-only files out of the distributed package.
+# art/ stays in the repository so the README screenshot renders on GitHub, but
+# it is not shipped: nothing loads it at runtime.
 /.github export-ignore
+/art export-ignore
 /tests export-ignore
 /docs export-ignore
 /.idea export-ignore

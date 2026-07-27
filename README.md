@@ -5,6 +5,10 @@ Automatic form saving for Filament v4 and v5 with a visual status indicator and 
 - **Edit pages** — changes are written to the database after a debounce.
 - **Create and custom pages** — unsubmitted changes are stored as a draft in Laravel Cache. When the user returns, they can *Restore* or *Discard* the draft.
 
+<p class="filament-hidden">
+  <img src="art/demo.png" alt="Filament Autosave Demo" />
+</p>
+
 ## Requirements
 
 - PHP 8.2+
