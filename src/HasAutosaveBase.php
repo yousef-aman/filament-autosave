@@ -494,6 +494,17 @@ trait HasAutosaveBase
     protected function enforceFieldOptionRules(array $data): array
     {
         foreach ($this->getAutosaveFields() as $path => $fields) {
+            // Resolve the payload first: deriving a rule reads the field's own live
+            // state, which some Filament releases cannot do while it is blank.
+            $matches = array_values(array_filter(
+                $this->matchAutosavePaths($data, $path),
+                fn (string $match): bool => filled(data_get($data, $match)),
+            ));
+
+            if ($matches === []) {
+                continue;
+            }
+
             $rules = [];
 
             foreach ($fields as $field) {
@@ -510,14 +521,10 @@ trait HasAutosaveBase
                 continue;
             }
 
-            foreach ($this->matchAutosavePaths($data, $path) as $match) {
-                $value = data_get($data, $match);
-
-                if (blank($value) || $this->passesOptionRules($value, $rules)) {
-                    continue;
+            foreach ($matches as $match) {
+                if (! $this->passesOptionRules(data_get($data, $match), $rules)) {
+                    $this->forgetAutosavePath($data, $match);
                 }
-
-                $this->forgetAutosavePath($data, $match);
             }
         }
 

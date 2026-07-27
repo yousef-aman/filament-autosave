@@ -163,6 +163,22 @@ test('create autosave keeps valid CheckboxList, multiple ToggleButtons and multi
     ]);
 });
 
+test('create autosave still drafts when other option fields are left blank', function () {
+    $component = new AutosaveMultiOptionCreateFormComponent;
+    $component->mount();
+
+    // perms and roles stay empty. Their rules must never be derived: on some
+    // Filament releases reading a blank multi-value option field's state throws,
+    // which used to abort the whole autosave.
+    $component->data = ['title' => 'Hello'];
+
+    $component->autosave();
+
+    $draft = Cache::get(AutosaveManager::cacheKey(AutosaveMultiOptionCreateFormComponent::class));
+
+    expect($draft)->toBe(['title' => 'Hello']);
+});
+
 test('create autosave drops an out-of-options element from an array-valued option field', function () {
     $component = new AutosaveMultiOptionCreateFormComponent;
     $component->mount();
