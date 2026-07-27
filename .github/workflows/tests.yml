@@ -49,7 +49,7 @@ jobs:
         run: |
           composer require "filament/filament:${{ matrix.filament }}" --no-interaction --no-update
           composer require "orchestra/testbench:${{ matrix.testbench }}" --dev --no-interaction --no-update
-          composer update --prefer-dist --no-interaction ${{ matrix.prefer == 'lowest' && '--prefer-lowest' || '' }}
+          composer update --prefer-dist --no-interaction ${{ matrix.prefer == 'lowest' && '--prefer-lowest --prefer-stable' || '' }}
 
       - name: Run tests
         run: vendor/bin/pest
