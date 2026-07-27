@@ -9,8 +9,20 @@ Automatic form saving for Filament v4 and v5 with a visual status indicator and 
 
 - PHP 8.2+
 - Filament v4 or v5
-- Laravel 12 or 13
 - Livewire v3 (with Filament v4) or v4 (with Filament v5)
+
+Laravel is not constrained by this package; it comes from Filament, which accepts
+11.28+, 12 and 13. CI covers Laravel 12 and 13 only — Composer 2.9+ refuses to
+install any Laravel 11 release, because the whole 11.x line is past its
+security-support window.
+
+### Tested combinations
+
+| PHP | Filament | Laravel |
+| --- | --- | --- |
+| 8.2, 8.3, 8.4 | v4, v5 | 12 |
+| 8.4 | v4, v5 | 13 |
+| 8.2 | v4.0 (lowest dependencies) | 12 |
 
 ## Installation
 
