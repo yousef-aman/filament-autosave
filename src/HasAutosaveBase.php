@@ -184,9 +184,7 @@ trait HasAutosaveBase
     }
 
     /**
-     * Guards mass-assignment of injected keys at every depth. A declared field
-     * with no declared children is opaque (KeyValue, a plain array column) and
-     * kept verbatim.
+     * A declared field with no declared children is opaque and kept verbatim.
      *
      * @param  array<string, mixed>  $state
      * @return array<string, mixed>
@@ -204,8 +202,7 @@ trait HasAutosaveBase
     }
 
     /**
-     * Declared fields keyed by full state path, with repeater/builder row keys
-     * collapsed to `*` (dehydration renumbers them).
+     * Keyed by full state path; repeater row keys collapse to `*`.
      *
      * @return array<string, array<object>> path pattern => component instances
      */
@@ -370,8 +367,7 @@ trait HasAutosaveBase
     }
 
     /**
-     * Removes a path and any container it just emptied, so a group that held only
-     * skipped fields is never written back as an empty value.
+     * Also removes a container this just emptied, never writing back an empty value.
      *
      * @param  array<string, mixed>  $data
      */
@@ -490,8 +486,7 @@ trait HasAutosaveBase
     }
 
     /**
-     * Autosave skips validation, so a crafted state could otherwise persist an
-     * out-of-scope option value that a normal save rejects.
+     * Validation is skipped, so a crafted state could persist a rejected option.
      *
      * @param  array<string, mixed>  $data
      * @return array<string, mixed>

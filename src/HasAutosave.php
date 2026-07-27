@@ -70,10 +70,8 @@ trait HasAutosave
     }
 
     /**
-     * Re-baselines Filament's unsaved-changes hash like save() does. rememberData()
-     * hashes the whole form state, not the payload, so it may only run when the
-     * write covered every filled field — otherwise a deliberately skipped field
-     * would be reported as saved and lost on navigation.
+     * rememberData() hashes the whole form state, not the payload, so it may only
+     * run when the write covered every filled field.
      *
      * @param  array<string, mixed>|null  $written  null re-baselines unconditionally
      */
@@ -275,9 +273,7 @@ trait HasAutosave
     }
 
     /**
-     * A nested state path (a Group's `statePath()`, a Repeater) is written as one
-     * whole column value, so persisting it after a nested field was skipped would
-     * destroy the stored value of that field. Skip the container instead.
+     * A container is one column value: a partial write destroys the skipped field.
      *
      * @param  array<string, mixed>  $data
      * @return array<string, mixed>

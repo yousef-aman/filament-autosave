@@ -9,7 +9,7 @@ Automatic form saving for Filament v4 and v5 with a visual status indicator and 
 
 - PHP 8.2+
 - Filament v4 or v5
-- Laravel 11, 12 or 13
+- Laravel 12 or 13
 - Livewire v3 (with Filament v4) or v4 (with Filament v5)
 
 ## Installation

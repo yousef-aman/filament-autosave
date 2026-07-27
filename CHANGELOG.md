@@ -10,7 +10,7 @@
   including "Create & create another"
 - Visual status indicator (unsaved, saving, saved, error, draft available,
   restored, undone)
-- Filament v4 and v5, Livewire v3 and v4, Laravel 11 to 13
+- Filament v4 and v5, Livewire v3 and v4, Laravel 12 and 13
 - Options at config, plugin and page level (debounce, excluded fields, cache TTL,
   indicator position, timestamp, enable/disable, excluded pages). Page-level
   options are methods — `shouldAutosave()`, `autosaveDebounce()`,
