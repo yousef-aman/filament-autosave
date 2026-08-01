@@ -1,0 +1,17 @@
+version: 2
+
+updates:
+  # Only Actions: this is a library, so composer.json carries deliberately wide
+  # constraints and no lockfile for an updater to maintain.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    # A malicious release is most dangerous in the hours after it lands.
+    cooldown:
+      default-days: 7
+      semver-major-days: 14
+    groups:
+      actions:
+        patterns:
+          - '*'
