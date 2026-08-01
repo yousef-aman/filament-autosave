@@ -1,5 +1,10 @@
 # Filament Autosave
 
+[![Latest Version on Packagist](https://img.shields.io/packagist/v/yousefaman/filament-autosave.svg?style=flat-square)](https://packagist.org/packages/yousefaman/filament-autosave)
+[![Total Downloads](https://img.shields.io/packagist/dt/yousefaman/filament-autosave.svg?style=flat-square)](https://packagist.org/packages/yousefaman/filament-autosave)
+[![tests](https://img.shields.io/github/actions/workflow/status/yousef-aman/filament-autosave/tests.yml?branch=main&label=tests&style=flat-square)](https://github.com/yousef-aman/filament-autosave/actions/workflows/tests.yml)
+[![License](https://img.shields.io/packagist/l/yousefaman/filament-autosave.svg?style=flat-square)](LICENSE.md)
+
 Automatic form saving for Filament v4 and v5 with a visual status indicator and one-step Undo on Edit pages.
 
 - **Edit pages** — changes are written to the database after a debounce.
