@@ -8,9 +8,10 @@ updates:
     schedule:
       interval: weekly
     # A malicious release is most dangerous in the hours after it lands.
+    # The semver-*-days keys are rejected for this ecosystem: Dependabot tracks
+    # Actions by ref, not by semver.
     cooldown:
       default-days: 7
-      semver-major-days: 14
     groups:
       actions:
         patterns:
