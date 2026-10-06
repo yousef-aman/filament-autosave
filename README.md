@@ -14,6 +14,8 @@ Automatic form saving for Filament v4 and v5 with a visual status indicator and 
   <img src="art/demo.png" alt="Filament Autosave Demo" />
 </p>
 
+If this package saves you time, a star on GitHub helps other Filament developers find it.
+
 ## Requirements
 
 - PHP 8.2+
